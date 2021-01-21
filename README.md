@@ -7,7 +7,7 @@ Development phase: May 13, 2009 (19:00 - 22:11 UTC+2)
 - Level can be saved by pressing "Enter"
 
 ## References
-- [Minecraft Wiki - Java_Edition_pre-Classic_rd-131655](https://minecraft.gamepedia.com/Java_Edition_pre-Classic_rd-131655)
+- [Minecraft Wiki - Java_Edition_pre-Classic_rd-132211](https://minecraft.gamepedia.com/Java_Edition_pre-Classic_rd-132211)
 
 ## Setup
 1. Clone the project
