@@ -1,6 +1,9 @@
 # rd-132211 (Pre-Classic)
 Development phase: May 13, 2009 (19:00 - 22:11 UTC+2)
 
+![Level](./.assets/level.jpg)<br>
+Level image from the recreation
+
 ## Changes
 - Placing & Destroying tiles
 - Added a flashing white overlay which displays on the side of a block that the player has their mouse
