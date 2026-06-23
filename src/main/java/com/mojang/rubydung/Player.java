@@ -16,6 +16,10 @@ public class Player {
     public float xRotation, yRotation;
 
     private boolean onGround;
+    
+    public boolean isFlying = false;
+    private int spaceTapTimer = 0;
+    private boolean wasSpacePressed = false;
 
     public AABB boundingBox;
 
@@ -106,17 +110,40 @@ public class Player {
         if (Keyboard.isKeyDown(205) || Keyboard.isKeyDown(32)) {  // Right, D
             vertical++;
         }
-        if ((Keyboard.isKeyDown(57) || Keyboard.isKeyDown(219))) { // Space, Windows Key
-            if (this.onGround) {
-                this.motionY = 0.12F;
-            }
-        }
 
-        // Add motion to the player using keyboard input
-        moveRelative(vertical, forward, this.onGround ? 0.02F : 0.005F);
+    if (spaceTapTimer > 0) {
+    spaceTapTimer--;
+}
 
-        // Apply gravity motion
-        this.motionY -= 0.005D;
+    boolean isSpaceDown = Keyboard.isKeyDown(57) || Keyboard.isKeyDown(219);
+
+    if (isSpaceDown && !wasSpacePressed) {
+    if (spaceTapTimer > 0) {
+        isFlying = !isFlying; // Вкл/выкл полет
+        spaceTapTimer = 0;
+    } else {
+        spaceTapTimer = 7; // Таймер двойного клика
+    }
+}
+    wasSpacePressed = isSpaceDown;
+
+
+    if (isFlying) {
+    if (isSpaceDown) { 
+        this.motionY = 0.15D;
+    } else if (Keyboard.isKeyDown(42)) { 
+        this.motionY = -0.15D;
+    } else { 
+        this.motionY = 0.0D;
+    }
+    moveRelative(vertical, forward, 0.02F); 
+} else {
+    if (isSpaceDown && this.onGround) {
+        this.motionY = 0.12F;
+    }
+    moveRelative(vertical, forward, this.onGround ? 0.02F : 0.005F);
+    this.motionY -= 0.005D;
+}
 
         // Move the player using the motion
         move(this.motionX, this.motionY, this.motionZ);
