@@ -24,6 +24,10 @@ public final class ChatActions {
 
     /** opens an http / https address in the browser, on its own thread so the game doesn't stall */
     public static void openLink(String url) {
+        // a server that does not allow links does not get them opened, whichever screen asked
+        if (!com.nikohalfkino.rubydung.net.Multiplayer.linksAllowed()) {
+            return;
+        }
         String lower = url.toLowerCase(Locale.ROOT);
         if (!lower.startsWith("http://") && !lower.startsWith("https://")) {
             return;

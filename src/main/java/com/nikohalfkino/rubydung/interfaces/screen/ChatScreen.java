@@ -24,7 +24,6 @@ import com.nikohalfkino.rubydung.interfaces.widget.TextField;
 import com.nikohalfkino.rubydung.interfaces.widget.Tooltip;
 import com.nikohalfkino.rubydung.interfaces.widget.UserList;
 import com.nikohalfkino.rubydung.render.Font;
-import com.nikohalfkino.rubydung.util.GameSettings;
 import com.nikohalfkino.rubydung.util.KeyBinding;
 import com.nikohalfkino.rubydung.util.KeyMap;
 import org.lwjgl.input.Keyboard;
@@ -43,6 +42,8 @@ public class ChatScreen extends FramePanelScreen implements FrameMouthProvider {
     private static final int LINE_HEIGHT = CHAR_HEIGHT + 3;
     private static final int PAD = 6;
     private static final int TOPIC_HEIGHT = CHAR_HEIGHT + 7;
+    // the row at the bottom of the conversation where "Name is typing..." shows
+    private static final int TYPING_ROW_HEIGHT = LINE_HEIGHT;
 
     private static final int INPUT_Y_OFFSET = 24;
     private static final int MAX_INPUT = 8192;
@@ -81,7 +82,7 @@ public class ChatScreen extends FramePanelScreen implements FrameMouthProvider {
     public ChatScreen(RubyDung game) {
         super(game);
         this.chat = game.getChatLog();
-        this.chat.setNick(GameSettings.getUsername());
+        this.chat.setNick(Multiplayer.selfName());
         Keyboard.enableRepeatEvents(true);
 
         Console console = game.getConsole();
@@ -113,6 +114,7 @@ public class ChatScreen extends FramePanelScreen implements FrameMouthProvider {
 
     @Override
     public void onClose() {
+        Multiplayer.setTyping(false);
         Keyboard.enableRepeatEvents(false);
     }
 
@@ -223,6 +225,8 @@ public class ChatScreen extends FramePanelScreen implements FrameMouthProvider {
         String text = this.input.getText().trim();
 
         this.input.clear();
+        // stopped typing before the message goes out, so the others' "..." is gone when it arrives
+        Multiplayer.setTyping(false);
         this.historyIndex = -1;
         this.scrollLines = 0;
 
@@ -234,9 +238,13 @@ public class ChatScreen extends FramePanelScreen implements FrameMouthProvider {
 
         if (ChatInputSyntax.isCommand(text)) {
             runCommand(text.substring(1).trim());
-        } else if (!Multiplayer.sendChat(text)) {
-            // alone or hosting: shown here (a joined player's chat comes back from the server)
-            this.chat.say(text);
+        } else {
+            if (!Multiplayer.sendChat(text)) {
+                // alone or hosting: shown here (a joined player's chat comes back from the server)
+                this.chat.say(ChatInputSyntax.displayed(text));
+            }
+            // the voice (and the portrait's mouth) is this player's own, whether or not a server carried the message.
+            // this used to be skipped when joined, so a joined player never spoke
             this.game.getSpeaker().speak(text);
         }
 
@@ -256,6 +264,16 @@ public class ChatScreen extends FramePanelScreen implements FrameMouthProvider {
             return;
         }
 
+        // in multiplayer most commands are the server's to run (and to refuse: they have tiers). a joined player's own
+        // game only runs the ones that touch nothing but their own screen, see Multiplayer.runCommand
+        List<String> serverAnswer = Multiplayer.runCommand(line);
+        if (serverAnswer != null) {
+            for (String output : serverAnswer) {
+                this.chat.notice(output);
+            }
+            return;
+        }
+
         for (String output : this.game.getConsole().execute(line)) {
             this.chat.notice(output);
         }
@@ -272,7 +290,9 @@ public class ChatScreen extends FramePanelScreen implements FrameMouthProvider {
 
         Gui2D.begin(this.game.getWidth(), this.game.getHeight());
 
+        updateTyping();
         drawConversation(font, mouseX, mouseY);
+        drawTypingIndicator(font);
         drawInputLine(font, mouseX, mouseY);
         drawSuggestions(font);
         drawLinkTooltip(font, mouseX, mouseY);
@@ -287,7 +307,7 @@ public class ChatScreen extends FramePanelScreen implements FrameMouthProvider {
 
         return Math.max(
                 1,
-                (this.layout.viewHeight - TOPIC_HEIGHT - PAD * 2) / LINE_HEIGHT
+                (this.layout.viewHeight - TOPIC_HEIGHT - PAD * 2 - TYPING_ROW_HEIGHT) / LINE_HEIGHT
         );
     }
 
@@ -408,7 +428,13 @@ public class ChatScreen extends FramePanelScreen implements FrameMouthProvider {
         // pictures line up with the text, so they get what is left of the width
         int maxWidth = Math.min(IMAGE_MAX_WIDTH, textWidth - prefixWidth);
 
+        // pictures from links are only downloaded where the server allows it (it shows our address to their host)
+        boolean showPictures = Multiplayer.embedsAllowed();
+
         for (String url : line.images) {
+            if (!showPictures) {
+                break;
+            }
             ChatImages.Entry image = ChatImages.get(url);
 
             if (!image.isReady() || maxWidth < LINE_HEIGHT) {
@@ -449,8 +475,9 @@ public class ChatScreen extends FramePanelScreen implements FrameMouthProvider {
                 0.10F, 0.15F, 0.45F, 0.9F
         );
 
+        String serverTopic = Multiplayer.chatTopic();
         String topic = "Topic for " + this.chat.getChannel()
-                + ": Welcome to " + GAME_TITLE
+                + ": " + (serverTopic.isEmpty() ? "Welcome to " + GAME_TITLE : serverTopic)
                 + (this.scrollLines > 0 ? "  [scrollback]" : "");
 
         drawText(
@@ -483,7 +510,8 @@ public class ChatScreen extends FramePanelScreen implements FrameMouthProvider {
                 Math.max(0, visual.size() - capacity)
         );
 
-        int baseY = y + h - PAD - LINE_HEIGHT;
+        // the bottom row of the panel is the typing indicator's, so the lines stop above it
+        int baseY = y + h - PAD - LINE_HEIGHT - TYPING_ROW_HEIGHT;
         int end = Math.min(visual.size(), this.scrollLines + capacity);
 
         // shadows first: a slice's shadow reaches into the row below, which would cover that slice
@@ -561,6 +589,10 @@ public class ChatScreen extends FramePanelScreen implements FrameMouthProvider {
 
     private void activate(Hit hit) {
         if (hit.kind == ChatText.Kind.LINK) {
+            if (!Multiplayer.linksAllowed()) {
+                this.chat.notice("This server does not allow opening links");
+                return;
+            }
             ChatActions.openLink(hit.value);
         } else if (ChatActions.copy(hit.value)) {
             this.copiedValue = hit.value;
@@ -639,6 +671,30 @@ public class ChatScreen extends FramePanelScreen implements FrameMouthProvider {
 
         // Anything else: the widgets (the Done button).
         super.mouseClicked(mouseX, mouseY);
+    }
+
+    /** tells the others whether a chat message (not a command) is being typed, every frame: Multiplayer only sends changes and refreshes */
+    private void updateTyping() {
+        String text = this.input.getText();
+        Multiplayer.setTyping(!text.trim().isEmpty() && !ChatInputSyntax.isCommand(text));
+    }
+
+    /** "Name is typing..." in the bottom row of the conversation (part of the chat area, not over the input line) */
+    private void drawTypingIndicator(Font font) {
+        List<String> names = Multiplayer.typingNames();
+        if (names.isEmpty()) {
+            return;
+        }
+        String text;
+        if (names.size() == 1) {
+            text = names.get(0) + " is typing...";
+        } else if (names.size() == 2) {
+            text = names.get(0) + " and " + names.get(1) + " are typing...";
+        } else {
+            text = "Several people are typing...";
+        }
+        drawText(font, fit(font, text, this.layout.viewWidth - PAD * 2), this.layout.viewX + PAD,
+                this.layout.viewY + this.layout.viewHeight - PAD - LINE_HEIGHT, NOTE_COLOR);
     }
 
     private void drawInputLine(Font font, int mouseX, int mouseY) {

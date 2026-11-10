@@ -4,7 +4,9 @@ public class Timer {
 
     private static final long NS_PER_SECOND = 1000000000L;
     private static final long MAX_NS_PER_UPDATE = 1000000000L;
-    private static final int MAX_TICKS_PER_UPDATE = 100;
+    // how many ticks one frame may run to catch up. a long frame must not make the next one longer (a tick that costs more than its
+    // share of time would then never be caught up with): past this the backlog is dropped and the game just runs slower for a moment
+    private static final int MAX_TICKS_PER_UPDATE = 10;
 
     private final float ticksPerSecond;
 
@@ -50,9 +52,12 @@ public class Timer {
         this.passedTime += passedNs * this.timeScale * this.ticksPerSecond / NS_PER_SECOND;
         this.ticks = (int) this.passedTime;
 
-        this.ticks = Math.min(MAX_TICKS_PER_UPDATE, this.ticks);
-
-        this.passedTime -= this.ticks;
+        if (this.ticks > MAX_TICKS_PER_UPDATE) {
+            this.ticks = MAX_TICKS_PER_UPDATE;
+            this.passedTime = 0.0F;   // the backlog is given up, not carried to the next frame
+        } else {
+            this.passedTime -= this.ticks;
+        }
         this.partialTicks = this.passedTime;
     }
 }

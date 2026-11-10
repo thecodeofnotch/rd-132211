@@ -7,9 +7,14 @@ import com.nikohalfkino.rubydung.level.generation.LevelGenerator;
 import com.nikohalfkino.rubydung.level.tiles.Tile;
 
 import java.io.BufferedReader;
+import java.io.File;
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Random;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.Queue;
@@ -19,11 +24,16 @@ import java.util.Queue;
  *
  *   java -Xmx2g -cp <the game's classes and libraries> com.nikohalfkino.rubydung.net.ServerMain --world MyWorld
  *
- * options: --world NAME (default "server"), --port N (25566), --max-players N (16), --size tiny|default|large|insane|xxl,
- * --type flat|natural|... (a LevelGenerator.WorldType name), --seed N, --autosave MINUTES (5, 0 = off)
+ * options: --world NAME (default "server", the world players start in), --worlds A,B,C (more worlds, dimensional doors
+ * lead between them), --port N (25566), --max-players N (16), --size tiny|default|large|insane|xxl,
+ * --type flat|natural|... (a LevelGenerator.WorldType name), --seed N (the first world only), --autosave MINUTES (5, 0 = off),
+ * --password TEXT (join password), --gui (a window with the log and a command line instead of the terminal), --settings DIR (default "server": server.properties, ops.txt, whitelist.txt, banned-players.txt, banned-ips.txt)
  *
- * an existing world of that name is loaded (its saved size and type win), otherwise a new one is made.
- * console commands: help, list, say TEXT, kick NAME, save, stop
+ * a world that exists is loaded (its saved size and type win), otherwise a new one is made. the worlds can also be
+ * listed in server.properties (worlds=a,b,c)
+ *
+ * the console is the owner of the server: every command in ServerCommands works here (type "help"), at tier HOST.
+ * a line without a dot is a command, same as with one
  */
 public final class ServerMain {
 
@@ -33,15 +43,26 @@ public final class ServerMain {
     }
 
     public static void main(String[] args) throws Exception {
-        System.setProperty("java.awt.headless", "true");
+        boolean gui = false;
+        for (String arg : args) {
+            if (arg.equals("--gui")) {
+                gui = true;
+            }
+        }
+        if (!gui) {
+            System.setProperty("java.awt.headless", "true");
+        }
 
         String worldName = "server";
         int port = Protocol.DEFAULT_PORT;
-        int maxPlayers = 16;
         int autosaveMinutes = 5;
         LevelGenerator.WorldSize size = LevelGenerator.WorldSize.DEFAULT;
         LevelGenerator.WorldType type = null;
         Long seed = null;
+        Integer maxPlayersOverride = null;
+        String settingsDir = "server";
+        String passwordOverride = null;
+        List<String> extraWorlds = new ArrayList<>();
 
         for (int i = 0; i < args.length; i++) {
             String flag = args[i];
@@ -56,7 +77,19 @@ public final class ServerMain {
                     i++;
                     break;
                 case "--max-players":
-                    maxPlayers = Integer.parseInt(need(flag, value));
+                    maxPlayersOverride = Integer.parseInt(need(flag, value));
+                    i++;
+                    break;
+                case "--worlds":
+                    for (String name : need(flag, value).split(",")) {
+                        if (!name.trim().isEmpty()) {
+                            extraWorlds.add(WorldManager.sanitize(name.trim()));
+                        }
+                    }
+                    i++;
+                    break;
+                case "--settings":
+                    settingsDir = need(flag, value);
                     i++;
                     break;
                 case "--autosave":
@@ -71,6 +104,12 @@ public final class ServerMain {
                     type = LevelGenerator.WorldType.valueOf(need(flag, value).toUpperCase(Locale.ROOT));
                     i++;
                     break;
+                case "--gui":
+                    break;
+                case "--password":
+                    passwordOverride = need(flag, value);
+                    i++;
+                    break;
                 case "--seed":
                     seed = Long.parseLong(need(flag, value));
                     i++;
@@ -81,40 +120,69 @@ public final class ServerMain {
             }
         }
 
+        final boolean[] stopRequested = {false};
+        Queue<String> commands = new ConcurrentLinkedQueue<>();
+        if (gui) {
+            // a window with the log and a command line, instead of the terminal
+            ServerPanel.open("Strata server", line -> commands.add(line.trim()), () -> stopRequested[0] = true);
+        }
+
         // the tile registry has to exist before any level does (the game does this on its main thread too)
         Tile.getTiles();
 
-        DayNightCycle clock = new DayNightCycle();
-        Level level;
-        if (WorldManager.exists(worldName) && WorldManager.levelFile(worldName).isFile()) {
-            System.out.println("[server] loading world \"" + worldName + "\"");
-            int[] savedSize = WorldManager.loadWorldSize(worldName);
-            LevelGenerator.WorldSize fallback = LevelGenerator.WorldSize.DEFAULT;
-            int width = savedSize != null ? savedSize[0] : fallback.width;
-            int height = savedSize != null ? savedSize[1] : fallback.height;
-            int depth = savedSize != null ? savedSize[2] : fallback.depth;
-            LevelGenerator.WorldType savedType = WorldManager.loadWorldType(worldName);
-            level = new Level(worldName, width, height, depth, savedType != null ? savedType : LevelGenerator.WorldType.FLAT);
-            if (!WorldManager.loadWorldTime(worldName, clock)) {
-                clock.applyCreationSettings(DayNightCycle.TimeMode.NORMAL, DayNightCycle.DEFAULT_START_TIME);
-            }
-        } else {
-            LevelGenerator.WorldType made = type != null ? type : LevelGenerator.WorldType.NATURAL;
-            long madeSeed = seed != null ? seed : new Random().nextLong();
-            System.out.println("[server] creating world \"" + worldName + "\" (" + made + ", " + size + ", seed " + madeSeed + ")");
-            clock.applyCreationSettings(DayNightCycle.TimeMode.NORMAL, DayNightCycle.DEFAULT_START_TIME);
-            WorldManager.saveWorldSettings(worldName, size, DayNightCycle.TimeMode.NORMAL);
-            level = new Level(worldName, size.width, size.height, size.depth, made, madeSeed);
-            level.save();
-            WorldManager.saveWorldTime(worldName, clock);
+        ServerSettings settings = ServerSettings.load(new File(settingsDir));
+        if (maxPlayersOverride != null) {
+            settings.setMaxPlayers(maxPlayersOverride);
+        }
+        if (passwordOverride != null && !passwordOverride.isEmpty()) {
+            settings.setPassword(passwordOverride);
         }
 
-        GameServer server = new GameServer(level, port, maxPlayers, clock, null, null, null, System.out::println, null);
-        server.setOwnsSimulation(true);
-        server.start();
-        System.out.println("[server] listening on port " + port + ". type \"help\" for commands");
+        // the main world first, then the ones from --worlds and server.properties
+        List<String> names = new ArrayList<>();
+        names.add(worldName);
+        for (String name : extraWorlds) {
+            addUnique(names, name);
+        }
+        for (String name : settings.getWorlds()) {
+            addUnique(names, WorldManager.sanitize(name));
+        }
 
-        Queue<String> commands = new ConcurrentLinkedQueue<>();
+        Map<String, Level> levels = new LinkedHashMap<>();
+        Map<String, DayNightCycle> clocks = new LinkedHashMap<>();
+        for (int i = 0; i < names.size(); i++) {
+            String name = names.get(i);
+            DayNightCycle clock = new DayNightCycle();
+            // --type and --seed only apply to the first world, the others are made with the defaults
+            Level level = openWorld(name, size, i == 0 ? type : null, i == 0 ? seed : null, clock);
+            levels.put(name, level);
+            clocks.put(name, clock);
+        }
+
+        GameServer server = new GameServer(worldName, levels.get(worldName), clocks.get(worldName), settings, port,
+                null, null, null, System.out::println, null);
+        for (int i = 1; i < names.size(); i++) {
+            server.addWorld(names.get(i), levels.get(names.get(i)), clocks.get(names.get(i)));
+        }
+        server.setOwnsSimulation(true);
+        // .createworld: the new world is kept in the same maps the autosave and the final save go through
+        server.setWorldCreator((name, wtype, wsize, wseed, clock) -> {
+            Level level = openWorld(name, wsize, wtype, wseed, clock);
+            levels.put(name, level);
+            clocks.put(name, clock);
+            return level;
+        });
+
+        server.setStopAction(() -> stopRequested[0] = true);
+        server.setSaveAction(() -> saveAll(levels, clocks));
+
+        server.start();
+        System.out.println("[server] listening on port " + port + " with " + names.size() + " world(s): "
+                + String.join(", ", names) + (settings.hasPassword() ? ", password on" : "")
+                + (settings.isWhitelistEnabled() ? ", whitelist on" : "")
+                + (server.doorsEnabled() ? ", dimensional doors on" : "")
+                + ". type \"help\" for commands");
+
         Thread console = new Thread(() -> {
             try (BufferedReader in = new BufferedReader(new InputStreamReader(System.in))) {
                 String line;
@@ -128,7 +196,6 @@ public final class ServerMain {
         console.start();
 
         final Thread mainThread = Thread.currentThread();
-        final boolean[] stopRequested = {false};
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             stopRequested[0] = true;
             try {
@@ -141,19 +208,31 @@ public final class ServerMain {
         long nextSave = System.nanoTime() + autosaveMinutes * 60L * 1_000_000_000L;
         long next = System.nanoTime();
 
+        int failedTicks = 0;
         while (!stopRequested[0]) {
-            server.tick();
+            // one bad tick or command must not end the loop: it would skip the final save and lose the world since the last autosave
+            try {
+                server.tick();
 
-            String command;
-            while ((command = commands.poll()) != null) {
-                if (runCommand(command, server, level, worldName, clock)) {
+                String command;
+                while ((command = commands.poll()) != null) {
+                    for (String reply : ServerCommands.execute(server, server.hostActor(), command)) {
+                        System.out.println(reply);
+                    }
+                }
+
+                if (autosaveMinutes > 0 && System.nanoTime() >= nextSave) {
+                    saveAll(levels, clocks);
+                    nextSave = System.nanoTime() + autosaveMinutes * 60L * 1_000_000_000L;
+                }
+                failedTicks = 0;
+            } catch (RuntimeException | OutOfMemoryError e) {
+                e.printStackTrace();
+                // something that fails every tick is not going to get better: save and stop instead of spinning
+                if (++failedTicks >= 100) {
+                    System.out.println("[server] the tick failed " + failedTicks + " times in a row, stopping");
                     stopRequested[0] = true;
                 }
-            }
-
-            if (autosaveMinutes > 0 && System.nanoTime() >= nextSave) {
-                save(level, worldName, clock);
-                nextSave = System.nanoTime() + autosaveMinutes * 60L * 1_000_000_000L;
             }
 
             next += tickNanos;
@@ -167,45 +246,57 @@ public final class ServerMain {
 
         System.out.println("[server] stopping...");
         server.stop("Server closed");
-        save(level, worldName, clock);
+        saveAll(levels, clocks);
         System.out.println("[server] bye");
+        if (gui) {
+            ServerPanel.close();
+        }
     }
 
-    private static boolean runCommand(String line, GameServer server, Level level, String worldName, DayNightCycle clock) {
-        if (line.isEmpty()) {
-            return false;
+    private static void addUnique(List<String> names, String name) {
+        for (String existing : names) {
+            if (existing.equalsIgnoreCase(name)) {
+                return;
+            }
         }
-        String[] parts = line.split("\\s+", 2);
-        String arg = parts.length > 1 ? parts[1] : "";
-
-        switch (parts[0].toLowerCase(Locale.ROOT)) {
-            case "help":
-                System.out.println("help | list | say TEXT | kick NAME | save | stop");
-                break;
-            case "list":
-                System.out.println(server.playerCount() + " player(s): " + String.join(", ", server.playerNames()));
-                break;
-            case "say":
-                server.announce("[Server] " + arg);
-                break;
-            case "kick":
-                System.out.println(server.kickByName(arg, "Kicked by the server") ? "kicked " + arg : "no player named " + arg);
-                break;
-            case "save":
-                save(level, worldName, clock);
-                break;
-            case "stop":
-                return true;
-            default:
-                System.out.println("unknown command, type \"help\"");
-        }
-        return false;
+        names.add(name);
     }
 
-    private static void save(Level level, String worldName, DayNightCycle clock) {
-        System.out.println("[server] saving...");
+    /** loads the world of that name, or makes it (a world that exists keeps its saved size and type) */
+    private static Level openWorld(String name, LevelGenerator.WorldSize size, LevelGenerator.WorldType type, Long seed,
+                                   DayNightCycle clock) {
+        if (WorldManager.exists(name) && WorldManager.levelFile(name).isFile()) {
+            System.out.println("[server] loading world \"" + name + "\"");
+            int[] savedSize = WorldManager.loadWorldSize(name);
+            LevelGenerator.WorldSize fallback = LevelGenerator.WorldSize.DEFAULT;
+            int width = savedSize != null ? savedSize[0] : fallback.width;
+            int height = savedSize != null ? savedSize[1] : fallback.height;
+            int depth = savedSize != null ? savedSize[2] : fallback.depth;
+            LevelGenerator.WorldType savedType = WorldManager.loadWorldType(name);
+            Level level = new Level(name, width, height, depth, savedType != null ? savedType : LevelGenerator.WorldType.FLAT);
+            if (!WorldManager.loadWorldTime(name, clock)) {
+                clock.applyCreationSettings(DayNightCycle.TimeMode.NORMAL, DayNightCycle.DEFAULT_START_TIME);
+            }
+            return level;
+        }
+
+        LevelGenerator.WorldType made = type != null ? type : LevelGenerator.WorldType.NATURAL;
+        long madeSeed = seed != null ? seed : new Random().nextLong();
+        System.out.println("[server] creating world \"" + name + "\" (" + made + ", " + size + ", seed " + madeSeed + ")");
+        clock.applyCreationSettings(DayNightCycle.TimeMode.NORMAL, DayNightCycle.DEFAULT_START_TIME);
+        WorldManager.saveWorldSettings(name, size, DayNightCycle.TimeMode.NORMAL);
+        Level level = new Level(name, size.width, size.height, size.depth, made, madeSeed);
         level.save();
-        WorldManager.saveWorldTime(worldName, clock);
+        WorldManager.saveWorldTime(name, clock);
+        return level;
+    }
+
+    private static void saveAll(Map<String, Level> levels, Map<String, DayNightCycle> clocks) {
+        System.out.println("[server] saving...");
+        for (Map.Entry<String, Level> e : levels.entrySet()) {
+            e.getValue().save();
+            WorldManager.saveWorldTime(e.getKey(), clocks.get(e.getKey()));
+        }
         System.out.println("[server] saved");
     }
 

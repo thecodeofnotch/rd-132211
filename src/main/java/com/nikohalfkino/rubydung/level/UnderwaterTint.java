@@ -1,6 +1,6 @@
 package com.nikohalfkino.rubydung.level;
 
-import com.nikohalfkino.rubydung.level.tiles.LiquidTile;
+import com.nikohalfkino.rubydung.level.tiles.special.LiquidTile;
 
 /**
  * how much liquid lies over a terrain face, packed into the vertex alpha for TerrainShader (keep the two in sync).

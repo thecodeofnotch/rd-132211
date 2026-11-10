@@ -15,7 +15,7 @@ import com.nikohalfkino.rubydung.interfaces.widget.Shadow;
 import com.nikohalfkino.rubydung.interfaces.widget.UiSounds;
 import com.nikohalfkino.rubydung.interfaces.widget.Widget;
 import com.nikohalfkino.rubydung.level.DoorRegistry;
-import com.nikohalfkino.rubydung.level.tiles.DoorColor;
+import com.nikohalfkino.rubydung.level.tiles.special.DoorColor;
 import com.nikohalfkino.rubydung.level.WorldManager;
 import com.nikohalfkino.rubydung.level.generation.LevelGenerator;
 import com.nikohalfkino.rubydung.render.Font;

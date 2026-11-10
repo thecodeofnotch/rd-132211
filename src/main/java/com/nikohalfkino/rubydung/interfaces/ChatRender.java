@@ -87,6 +87,8 @@ public final class ChatRender {
         List<Part> parts = new ArrayList<>();
         int taken = 0;
         int index = 0;
+        // with embeds off no picture is shown under the line, so a picture link stays a plain link with its full address
+        boolean embeds = com.nikohalfkino.rubydung.net.Multiplayer.embedsAllowed();
 
         for (ChatText.Span span : line.spans) {
             if (span.start < taken || span.end > text.length()) {
@@ -95,7 +97,7 @@ public final class ChatRender {
 
             out.append(text, taken, span.start);
 
-            boolean image = span.kind == ChatText.Kind.LINK && isImage(line, span.value);
+            boolean image = embeds && span.kind == ChatText.Kind.LINK && isImage(line, span.value);
             String label = image
                     ? (tag ? IMAGE_TAG : IMAGE_ICON + fileName(span.value))
                     : text.substring(span.start, span.end);

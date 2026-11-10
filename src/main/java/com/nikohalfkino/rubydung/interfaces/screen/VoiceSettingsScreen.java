@@ -144,6 +144,18 @@ public class VoiceSettingsScreen extends MenuScreen {
 
         col.add(new Label("Tuning").setColor(UiStyle.TEXT_DIM), HEADER_GAP);
 
+        // how loud every voice is (yours and the other players')
+        col.add(sliderRow(
+                new Slider("Volume", SLIDER_WIDTH, ROW_HEIGHT,
+                        0.0f, 100.0f, Math.round(JTalkSettings.getVolume() * 100.0f), true)
+                        .onChange(percent -> JTalkSettings.setVolume(percent / 100.0f))
+                        .onCommit(() -> {
+                            JTalkSettings.save();
+                            sample();
+                        }),
+                () -> near(JTalkSettings.getVolume(), JTalkSettings.DEF_VOLUME),
+                JTalkSettings::resetVolume));
+
         // -r  speech speed
         col.add(sliderRow(
                 new Slider("Speed", SLIDER_WIDTH, ROW_HEIGHT,

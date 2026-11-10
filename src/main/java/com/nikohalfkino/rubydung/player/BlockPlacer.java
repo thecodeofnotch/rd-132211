@@ -3,8 +3,12 @@ package com.nikohalfkino.rubydung.player;
 import com.nikohalfkino.rubydung.audio.SoundEffects;
 import com.nikohalfkino.rubydung.interfaces.hud.HandHud;
 import com.nikohalfkino.rubydung.level.SubTilePlacement;
-import com.nikohalfkino.rubydung.level.tiles.LiquidTile;
-import com.nikohalfkino.rubydung.level.tiles.RotatableTile;
+import com.nikohalfkino.rubydung.net.Multiplayer;
+import com.nikohalfkino.rubydung.level.tiles.special.LiquidTile;
+import com.nikohalfkino.rubydung.level.tiles.common.RotatableTile;
+import com.nikohalfkino.rubydung.level.tiles.special.ChessPieceTile;
+import com.nikohalfkino.rubydung.level.tiles.special.CubeTile;
+import com.nikohalfkino.rubydung.level.tiles.special.DiceTile;
 import com.nikohalfkino.rubydung.level.tiles.Tile;
 import com.nikohalfkino.rubydung.phys.AABB;
 import com.nikohalfkino.rubydung.util.KeyBinding;
@@ -113,6 +117,12 @@ final class BlockPlacer {
             if (box.intersects(this.ctx.player.boundingBox)) {
                 return true;
             }
+            // other players of a multiplayer game are solid for building too (unless they walk through blocks)
+            for (com.nikohalfkino.rubydung.net.RemotePlayer other : Multiplayer.remotes().all()) {
+                if (!other.isNoClip() && box.intersects(other.boundingBox())) {
+                    return true;
+                }
+            }
         }
         return false;
     }
@@ -191,6 +201,26 @@ final class BlockPlacer {
             return false;
         }
 
+        // A weighted cube is a body, not a block: it is dropped into the cell, aligned to the grid.
+        if (selected instanceof CubeTile) {
+            return placeCube(hit, x, y, z, false);
+        }
+
+        // A dice is the same, a cube that shows a number after it has been thrown.
+        if (selected instanceof DiceTile) {
+            return placeCube(hit, x, y, z, true);
+        }
+
+        // A chess piece is an entity too: it stands on the square, aligned to the grid.
+        if (selected instanceof ChessPieceTile) {
+            return placeChessPiece(hit, x, y, z);
+        }
+
+        // An entity standing in the cell fills it like a sprite tile does.
+        if (this.ctx.level.getCubeManager().pieceAt(x, y, z) != null) {
+            return false;
+        }
+
         // 0. A liquid goes in the liquid layer of the cell next to the face, next to whatever block is there
         // (a slab, a stair...). a full block in the cell refuses it. the player never blocks it.
         if (selected instanceof LiquidTile) {
@@ -255,6 +285,30 @@ final class BlockPlacer {
             return false;
         }
 
+        notePlaced(hit, x, y, z);
+        return true;
+    }
+
+    // puts a weighted cube (or a dice) into the free cell (x, y, z). joined to a server it is asked of the server, which puts it there for everybody (it shows up when the server says so)
+    private boolean placeCube(HitResult hit, int x, int y, int z, boolean dice) {
+        if (Multiplayer.isClient()) {
+            if (!this.ctx.level.getCubeManager().canSpawnIn(x, y, z, this.ctx.player)) {
+                return false;
+            }
+            Multiplayer.cubeSpawn(x, y, z, dice);
+        } else if (this.ctx.level.getCubeManager().spawnIn(x, y, z, this.ctx.player, dice) == null) {
+            return false;
+        }
+        notePlaced(hit, x, y, z);
+        return true;
+    }
+
+    // stands the selected chess piece on the free cell (x, y, z). setting the tile is what puts it there (Level.setTile), joined to a server it asks the server, which stands it there for everybody
+    private boolean placeChessPiece(HitResult hit, int x, int y, int z) {
+        if (!this.ctx.level.getCubeManager().canSpawnPieceIn(x, y, z, this.ctx.player)) {
+            return false;
+        }
+        this.ctx.level.setTile(x, y, z, this.ctx.selectedTile.id, 0);
         notePlaced(hit, x, y, z);
         return true;
     }

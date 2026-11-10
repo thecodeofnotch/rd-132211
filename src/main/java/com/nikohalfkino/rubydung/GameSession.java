@@ -23,10 +23,10 @@ public class GameSession {
 
     private final RubyDung game;
 
-    private Level level;
+    private volatile Level level;
     private LevelRenderer levelRenderer;
     private Player player;
-    private PlayerInteraction playerInteraction;
+    private volatile PlayerInteraction playerInteraction;
 
     public GameSession(RubyDung game) {
         this.game = game;
@@ -52,13 +52,28 @@ public class GameSession {
         return this.playerInteraction;
     }
 
+    /**
+     * the tile in the player's hand. the HUD asks for it on every frame, including the title screen and the loading
+     * screen where there is no world (and so no PlayerInteraction yet), so it falls back instead of failing
+     */
     public Tile getSelectedTile() {
-        return this.playerInteraction.getSelectedTile();
+        PlayerInteraction interaction = this.playerInteraction;
+        // read here and not in a static field: Tile's setup may touch OpenGL, which does not exist yet when this class loads
+        return interaction != null ? interaction.getSelectedTile() : Tile.GRASS;
     }
 
     public void tick() {
+        tick(true);
+    }
+
+    /** interaction false: a menu has the mouse (multiplayer only, alone the game stands still), the body still moves */
+    public void tick(boolean interaction) {
         this.player.tick();
-        this.playerInteraction.tick();
+        if (interaction) {
+            this.playerInteraction.tick();
+        }
+        // After the player moved and the hold set where a carried cube goes.
+        this.level.getCubeManager().tick(this.player);
     }
 
     private void enterWorld(String worldName, LevelGenerator.WorldType type, Long seed, int width, int height, int depth,
@@ -102,10 +117,21 @@ public class GameSession {
 
     /** main thread: the level exists, everything that needs OpenGL is made here, then the screen starts building meshes */
     private void finishEnteringWorld(Level built, LoadingScreen loadingScreen, boolean saveWhenReady) {
+        // Initialize everything before marking the world as ready.
+        LevelRenderer newRenderer = new LevelRenderer(built);
+        Player newPlayer = new Player(built);
+        PlayerInteraction newInteraction = new PlayerInteraction(built, newPlayer);
+
+        this.levelRenderer = newRenderer;
+        this.player = newPlayer;
+        this.playerInteraction = newInteraction;
+
+        // Publish the level last: hasWorld() now means everything is initialized.
         this.level = built;
-        this.levelRenderer = new LevelRenderer(this.level);
-        this.player = new Player(this.level);
-        this.playerInteraction = new PlayerInteraction(this.level, this.player);
+
+        // Alone (or hosting, where the server takes this over) a thrown dice that has come to rest tells the chat what it shows.
+        built.getCubeManager().setRollListener((dice, value, holderId) ->
+                this.game.getChatLog().notice(com.nikohalfkino.rubydung.util.GameSettings.getUsername() + " rolled a " + value + "!"));
 
         if (this.level.hasSavedPosition) {
             this.player.setPositionAndRotation(
@@ -244,10 +270,10 @@ public class GameSession {
             this.levelRenderer.dispose();
         }
 
+        this.level = null;
         this.levelRenderer = null;
         this.playerInteraction = null;
         this.player = null;
-        this.level = null;
     }
 
     public void dispose() {

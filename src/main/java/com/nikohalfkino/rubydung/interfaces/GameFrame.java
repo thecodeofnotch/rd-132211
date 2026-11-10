@@ -1,9 +1,9 @@
 package com.nikohalfkino.rubydung.interfaces;
 
 import com.nikohalfkino.rubydung.interfaces.widget.PanelSection;
+import com.nikohalfkino.rubydung.net.Multiplayer;
 import com.nikohalfkino.rubydung.render.Font;
 import com.nikohalfkino.rubydung.render.Textures;
-import com.nikohalfkino.rubydung.util.GameSettings;
 import org.lwjgl.BufferUtils;
 
 import java.nio.ByteBuffer;
@@ -515,7 +515,7 @@ public final class GameFrame {
 
         if (font != null && layout.gridX < windowWidth) {
             float centerX = layout.panelX + layout.panelWidth / 2.0F;
-            drawCentered(font, GameSettings.getUsername(), centerX, layout.nameY, NAME_COLOR);
+            drawCentered(font, Multiplayer.selfName(), centerX, layout.nameY, NAME_COLOR);
             for (SectionLayout section : layout.sections) {
                 drawCentered(font, section.title, centerX, section.titleY, TITLE_COLOR);
             }

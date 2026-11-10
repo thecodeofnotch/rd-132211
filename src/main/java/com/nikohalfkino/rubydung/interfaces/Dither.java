@@ -34,6 +34,20 @@ public final class Dither {
         glDisable(GL_POLYGON_STIPPLE);
     }
 
+    /** turns the checkerboard stipple on for whatever is drawn next (a sprite that should look see-through), call disableStipple after */
+    public static void enableStipple() {
+        if (checkerMask == null) {
+            sparseMask = buildMask(false);
+            checkerMask = buildMask(true);
+        }
+        glEnable(GL_POLYGON_STIPPLE);
+        glPolygonStipple(checkerMask);
+    }
+
+    public static void disableStipple() {
+        glDisable(GL_POLYGON_STIPPLE);
+    }
+
     // 32x32 stipple in 2x2-pixel cells (UI_SCALE = 2): a checkerboard, or a quarter filled
     private static ByteBuffer buildMask(boolean checker) {
         ByteBuffer mask = BufferUtils.createByteBuffer(128);

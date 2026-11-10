@@ -1,11 +1,11 @@
 package com.nikohalfkino.rubydung.console.commands;
 
 import com.nikohalfkino.rubydung.RubyDung;
-import com.nikohalfkino.rubydung.console.Command;
+import com.nikohalfkino.rubydung.console.LocalCommand;
 import com.nikohalfkino.rubydung.console.Console;
 import com.nikohalfkino.rubydung.player.Player;
 
-public class NoClipCommand implements Command {
+public class NoClipCommand extends LocalCommand {
 
     @Override
     public String name() {

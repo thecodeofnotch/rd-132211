@@ -41,6 +41,12 @@ public class TextInput extends Widget {
         this.prefix = prefix;
     }
 
+    /** on: typed characters show as asterisks (passwords) */
+    public TextInput setMasked(boolean masked) {
+        this.field.setMasked(masked);
+        return this;
+    }
+
     public TextField getField() {
         return this.field;
     }
@@ -128,7 +134,7 @@ public class TextInput extends Widget {
             this.field.updateMouse(mouseX, mouseY, textX, textY, font, this.prefix);
             this.field.render(font, textX, textY, UiStyle.TEXT, this.prefix);
         } else {
-            font.drawString(this.prefix + this.field.getText(), textX, textY, UiStyle.TEXT);
+            font.drawString(this.prefix + this.field.getDisplayText(), textX, textY, UiStyle.TEXT);
         }
     }
 }

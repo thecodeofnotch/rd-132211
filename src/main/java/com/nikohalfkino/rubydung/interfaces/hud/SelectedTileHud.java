@@ -4,9 +4,9 @@ import com.nikohalfkino.rubydung.RubyDung;
 import com.nikohalfkino.rubydung.interfaces.TileIconRenderer;
 import com.nikohalfkino.rubydung.interfaces.widget.Anchor;
 import com.nikohalfkino.rubydung.interfaces.widget.Widget;
-import com.nikohalfkino.rubydung.level.tiles.DimensionalDoorTile;
+import com.nikohalfkino.rubydung.level.tiles.special.DimensionalDoorTile;
 import com.nikohalfkino.rubydung.level.tiles.Tile;
-import com.nikohalfkino.rubydung.level.tiles.TreeTile;
+import com.nikohalfkino.rubydung.level.tiles.special.TreeTile;
 import com.nikohalfkino.rubydung.render.Font;
 
 import java.util.ArrayList;
@@ -112,7 +112,7 @@ public class SelectedTileHud extends Widget {
 
     public SelectedTileHud(RubyDung game) {
         this.game = game;
-        setAnchor(Anchor.BOTTOM_LEFT, 10, -10);
+        setAnchor(Anchor.BOTTOM_LEFT, EDGE_MARGIN, -EDGE_MARGIN);
     }
 
     private static String tileName(Tile tile) {
@@ -150,8 +150,20 @@ public class SelectedTileHud extends Widget {
 
     @Override
     protected float naturalHeight(Font font) {
-        return textLines(this.game.getSelectedTile()) * LINE_STEP + TEXT_ICON_GAP + ROW_HEIGHT;
+        return heightFor(this.game.getSelectedTile());
     }
+
+    /**
+     * how tall this hud is while the given tile is selected: one text line, or two when the tile has a "Type:" line,
+     * then the icon row. other widgets stacked above it (the chat hud) ask this instead of guessing, so the two can
+     * never overlap whichever tile is selected
+     */
+    public static float heightFor(Tile tile) {
+        return textLines(tile) * LINE_STEP + TEXT_ICON_GAP + ROW_HEIGHT;
+    }
+
+    /** the gap this hud keeps from the window's left and bottom edges */
+    public static final float EDGE_MARGIN = 10.0F;
 
     @Override
     protected void draw(Font font, int mouseX, int mouseY) {

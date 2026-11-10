@@ -1,15 +1,20 @@
 package com.nikohalfkino.rubydung.player;
 
 import com.nikohalfkino.rubydung.audio.SoundEffects;
+import com.nikohalfkino.rubydung.entity.CubeEntity;
 import com.nikohalfkino.rubydung.interfaces.hud.HandHud;
 import com.nikohalfkino.rubydung.level.Level;
-import com.nikohalfkino.rubydung.level.tiles.DimensionalDoorTile;
+import com.nikohalfkino.rubydung.net.Multiplayer;
+import com.nikohalfkino.rubydung.level.tiles.special.DimensionalDoorTile;
 import com.nikohalfkino.rubydung.level.tiles.Tile;
-import com.nikohalfkino.rubydung.level.tiles.WoodenDoorTile;
+import com.nikohalfkino.rubydung.level.tiles.TileRegistry;
+import com.nikohalfkino.rubydung.level.tiles.special.ChessPieceTile;
+import com.nikohalfkino.rubydung.level.tiles.special.WoodenDoorTile;
 import com.nikohalfkino.rubydung.util.KeyBinding;
 
 import java.util.List;
 
+import static com.nikohalfkino.rubydung.player.InteractionContext.BREAK_DELAY_TICKS;
 import static com.nikohalfkino.rubydung.player.InteractionContext.DEBUG_CLICKS;
 
 /**
@@ -26,6 +31,8 @@ public class PlayerInteraction {
     private final BlockBreaker breaker;
     private final BlockPlacer placer;
     private final BlockReplacer replacer;
+    private final CubeHold cubeHold;
+    private final ChessSelection chess = new ChessSelection();
 
     private int heldTicks = 0;
     private boolean chordActive = false;
@@ -36,12 +43,120 @@ public class PlayerInteraction {
     private boolean breakSuppressedUntilRelease = false;
     private boolean placeSuppressedUntilRelease = false;
 
+    // the break button was down last tick (a cube is only broken by a fresh click, never by sweeping over it)
+    private boolean cubeBreakWasDown = false;
+
     public PlayerInteraction(Level level, Player player) {
         this.ctx = new InteractionContext(level, player);
         this.hitTracker = new HitTracker(level);
         this.breaker = new BlockBreaker(this.ctx, this.hitTracker);
         this.placer = new BlockPlacer(this.ctx);
         this.replacer = new BlockReplacer(this.ctx, this.placer);
+        this.cubeHold = new CubeHold(player);
+    }
+
+    // Chess
+
+    /** the chess piece picked up with the interact key, and where it may go */
+    public ChessSelection getChessSelection() {
+        return this.chess;
+    }
+
+    // Weighted cubes
+
+    public CubeHold getCubeHold() {
+        return this.cubeHold;
+    }
+
+    public boolean isHoldingCube() {
+        return this.cubeHold.isHolding();
+    }
+
+    /** the held cube is being turned by hand: the camera must not follow the mouse */
+    public boolean isRotatingCube() {
+        return this.cubeHold.isRotating();
+    }
+
+    public void rotateCube(float mouseDx, float mouseDy) {
+        this.cubeHold.rotate(mouseDx, mouseDy);
+    }
+
+    /** mouse wheel while carrying: positive = farther */
+    public void scrollCube(int direction) {
+        this.cubeHold.scroll(direction);
+    }
+
+    /** word for the interact prompt when the key does something with a cube ("Pick up", "Drop"), null when it doesn't */
+    public String getCubePrompt() {
+        if (this.cubeHold.isHolding()) {
+            return "Drop";
+        }
+        return this.cubeHold.getTargeted() != null ? "Pick up" : null;
+    }
+
+    /**
+     * works out which cube (if any) the crosshair is on: the nearest thing along the ray, a block in front of it hides it. call after setHitResult, every frame
+     */
+    public void updateCubeTarget(double eyeX, double eyeY, double eyeZ,
+                                 double dirX, double dirY, double dirZ, double reach) {
+        if (this.cubeHold.isHolding()) {
+            this.cubeHold.setTargeted(null);
+            return;
+        }
+
+        double[] distance = new double[1];
+        CubeEntity cube = this.ctx.level.getCubeManager()
+                .raycast(eyeX, eyeY, eyeZ, dirX, dirY, dirZ, reach, distance);
+
+        HitResult hit = this.hitTracker.current();
+        if (cube != null && hit != null) {
+            double hx = hit.hasPoint ? hit.hitX : hit.cellX + 0.5;
+            double hy = hit.hasPoint ? hit.hitY : hit.cellY + 0.5;
+            double hz = hit.hasPoint ? hit.hitZ : hit.cellZ + 0.5;
+            double blockDistance = Math.sqrt((hx - eyeX) * (hx - eyeX) + (hy - eyeY) * (hy - eyeY)
+                    + (hz - eyeZ) * (hz - eyeZ));
+            if (!hit.hasPoint) {
+                blockDistance -= 0.5;   // the cell centre is about half a block behind its face
+            }
+            if (distance[0] >= blockDistance) {
+                cube = null;
+            }
+        }
+        this.cubeHold.setTargeted(cube);
+    }
+
+    /** nothing is aimed at (freecam, no hit): drops the cube target */
+    public void clearCubeTarget() {
+        this.cubeHold.setTargeted(null);
+        this.ctx.level.getCubeManager().setTargetedPiece(null);
+    }
+
+    /**
+     * the interact key, tried before everything else: lets go of a carried cube, or picks up the one under the crosshair. true if it did something
+     */
+    public boolean interactWithCube() {
+        if (this.cubeHold.isHolding()) {
+            this.cubeHold.drop();
+            suppressHeldButtonsUntilReleased();
+            return true;
+        }
+
+        if (this.cubeHold.getTargeted() != null && this.cubeHold.pickUp()) {
+            resetHold();
+            HandHud.swingCurrent(HandHud.Action.INTERACT);
+            return true;
+        }
+        return false;
+    }
+
+    /** the server does not let the player carry this cube, or it is gone: it is let go of */
+    public void cubeDenied(int cubeId) {
+        this.cubeHold.denied(cubeId);
+    }
+
+    /** the level is going away: a carried cube is forgotten */
+    public void releaseCube() {
+        this.cubeHold.forget();
     }
 
     // Targeting
@@ -57,8 +172,15 @@ public class PlayerInteraction {
     /** crosshair is on a tile the interact key does something with (drives the "[E] Interact" prompt) */
     public boolean isTargetingInteractable() {
         HitResult hit = this.hitTracker.current();
+        if (this.ctx.level.getCubeManager().getTargetedPiece() != null) {
+            return true;   // a chess piece: interact picks it up, or takes it when another one is picked
+        }
         if (hit == null) {
             return false;
+        }
+
+        if (this.chess.isAimingAtMove(hit)) {
+            return true;   // a lit square: interact puts the picked chess piece there
         }
 
         Tile tile = this.ctx.targetTile(hit);
@@ -79,6 +201,12 @@ public class PlayerInteraction {
     /** the interact key: handles tiles that react straight away (wooden doors open/close). true if it did something, so the caller skips its own handling (screens for dimensional doors etc.) */
     public boolean interact() {
         HitResult hit = this.hitTracker.current();
+
+        // chess pieces: pick one up, put the picked one on a lit square (swings the hand itself)
+        if (this.chess.interact(this.ctx.level, this.ctx.player, hit)) {
+            return true;
+        }
+
         if (hit == null || !(this.ctx.targetTile(hit) instanceof WoodenDoorTile)) {
             return false;
         }
@@ -128,6 +256,16 @@ public class PlayerInteraction {
     }
 
     public void pickTargetedTile() {
+        // an entity in front of the block behind it is picked as the tile it was placed from
+        CubeEntity entity = targetedEntity();
+        if (entity != null) {
+            Tile tile = tileOf(entity);
+            if (tile != null) {
+                this.ctx.selectedTile = tile;
+            }
+            return;
+        }
+
         HitResult hit = this.hitTracker.current();
         if (hit == null) {
             return;
@@ -153,7 +291,15 @@ public class PlayerInteraction {
             return;
         }
         if (button == 0) {
-            this.breaker.handleClick();
+            // an entity in front of a block is what the click is on: it is not the block behind it that breaks
+            if (!breakTargetedEntity()) {
+                this.breaker.handleClick();
+            }
+            return;
+        }
+
+        // and placing does nothing against the block behind an entity either
+        if (targetedEntity() != null) {
             return;
         }
 
@@ -168,6 +314,58 @@ public class PlayerInteraction {
         if (button == 1) {
             this.placer.handleClick(hit);
         }
+    }
+
+    // Entities (the weighted cubes and the chess pieces): they are targeted, picked, placed and broken like the tiles they are placed from
+
+    /** the weighted cube or chess piece the crosshair is on (nothing in front of it), null while carrying one or if none */
+    private CubeEntity targetedEntity() {
+        if (this.cubeHold.isHolding()) {
+            return null;
+        }
+        CubeEntity cube = this.cubeHold.getTargeted();
+        return cube != null ? cube : this.ctx.level.getCubeManager().getTargetedPiece();
+    }
+
+    /** the tile a cube or a piece is placed from (the sound, the pick and the tile selector know it by that) */
+    private static Tile tileOf(CubeEntity entity) {
+        if (entity.isPiece()) {
+            return ChessPieceTile.of(entity);
+        }
+        return entity.isDice() ? TileRegistry.DICE : TileRegistry.WEIGHTED_CUBE;
+    }
+
+    /**
+     * a fresh break click on an entity removes it, with the sound of its tile and the hand swing, and starts the repeat timer like a broken block does, so the same press does not go on to break the block behind it (holding the button still breaks on, like it does from block to block). true if the click was on an entity
+     */
+    private boolean breakTargetedEntity() {
+        CubeEntity target = targetedEntity();
+        if (target == null) {
+            return false;
+        }
+        if (!this.breakSuppressedUntilRelease) {
+            removeEntity(target);
+        }
+        return true;
+    }
+
+    private void removeEntity(CubeEntity target) {
+        Tile tile = tileOf(target);
+        if (Multiplayer.isClient()) {
+            Multiplayer.cubeRemove(target);   // it goes when the server says so
+        } else {
+            this.ctx.level.getCubeManager().remove(target);
+        }
+        if (tile != null) {
+            SoundEffects.playTileBreak(tile);
+        }
+        this.cubeHold.setTargeted(null);
+        this.ctx.level.getCubeManager().setTargetedPiece(null);
+        HandHud.swingCurrent(HandHud.Action.BREAK);
+
+        this.ctx.acted = true;
+        this.ctx.actionCooldown = BREAK_DELAY_TICKS - 1;
+        this.cubeBreakWasDown = true;   // this press is spent
     }
 
     // Held buttons
@@ -192,6 +390,8 @@ public class PlayerInteraction {
     }
 
     public void tick() {
+        this.chess.tick(this.ctx.level);
+
         // Always drained, so a stale queue never builds up while no button is held.
         List<HitResult> hits = this.hitTracker.drain();
         double speed = playerSpeed();
@@ -221,6 +421,33 @@ public class PlayerInteraction {
                 this.placeSuppressedUntilRelease = true;
             }
         }
+
+        // Carrying a cube takes over the buttons (throw, rotate) and locks all block work: no tile selection, placing or breaking.
+        if (this.cubeHold.isHolding()) {
+            resetHold();
+            this.chordActive = false;
+            this.cubeHold.tick();
+            if (!this.cubeHold.isHolding()) {
+                // thrown or dropped: the button still down must not turn into a break or a placement
+                suppressHeldButtonsUntilReleased();
+            }
+            this.cubeBreakWasDown = breakHeld;
+            return;
+        }
+
+        // A cube or a chess piece in front of whatever is behind it: the break button removes it (a fresh press only, never by sweeping
+        // over it), the place button does nothing, and the hold is reset so what is behind it is not broken by the same press.
+        CubeEntity entity = targetedEntity();
+        if (entity != null) {
+            resetHold();
+            this.chordActive = false;
+            if (breakHeld && !this.cubeBreakWasDown && !this.breakSuppressedUntilRelease) {
+                removeEntity(entity);
+            }
+            this.cubeBreakWasDown = breakHeld;
+            return;
+        }
+        this.cubeBreakWasDown = breakHeld;
 
         boolean breaking = breakHeld && !this.breakSuppressedUntilRelease;
         boolean placing = placeHeld && !this.placeSuppressedUntilRelease;

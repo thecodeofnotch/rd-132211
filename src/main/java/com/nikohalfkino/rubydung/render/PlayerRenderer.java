@@ -32,30 +32,84 @@ public final class PlayerRenderer {
     private int texture = 0;
     private boolean loadFailed = false;
     private int frames = ANGLES;
+    private int sheetWidth = FRAME_WIDTH * ANGLES;
+    private int sheetHeight = FRAME_HEIGHT;
+
+    // the sprite's own shader: the see-through and silhouette dithers alternate per sprite pixel (a texel of the sheet),
+    // not per screen pixel, so the pattern sits on the sprite's pixel grid whatever size it is drawn at
+    private static final String VERT =
+            "#version 120\n" +
+                    "varying vec4 vColor;\n" +
+                    "void main() {\n" +
+                    "    gl_Position = ftransform();\n" +
+                    "    gl_TexCoord[0] = gl_MultiTexCoord0;\n" +
+                    "    vColor = gl_Color;\n" +
+                    "}\n";
+
+    // mode 0 = plain, 1 = half see-through checkerboard, 2 = dark checkerboard silhouette
+    private static final String FRAG =
+            "#version 120\n" +
+                    "uniform sampler2D tex;\n" +
+                    "uniform vec2 sheetSize;\n" +
+                    "uniform float mode;\n" +
+                    "varying vec4 vColor;\n" +
+                    "void main() {\n" +
+                    "    vec2 st = gl_TexCoord[0].st;\n" +
+                    "    vec4 c = texture2D(tex, st);\n" +
+                    "    if (c.a < 0.5) discard;\n" +
+                    "    vec2 texel = floor(st * sheetSize);\n" +
+                    "    float odd = mod(texel.x + texel.y, 2.0);\n" +
+                    "    if (mode > 0.5 && odd > 0.5) discard;\n" +
+                    "    if (mode > 1.5) {\n" +
+                    "        gl_FragColor = vec4(0.0, 0.0, 0.0, 0.7);\n" +
+                    "    } else {\n" +
+                    "        gl_FragColor = vec4(c.rgb * vColor.rgb, c.a);\n" +
+                    "    }\n" +
+                    "}\n";
+
+    private int spriteProgram = 0;
+    private int sheetSizeLocation = -1;
+    private int modeLocation = -1;
 
     public void render(Level level, Player player, PlayerCamera camera, float partialTicks) {
         if (!camera.isPlayerVisible()) {
             return;
         }
 
+        renderSeenFrom(level, player, partialTicks, camera.getX(), camera.getZ(), camera.getYaw());
+    }
+
+    /** another player of a multiplayer game: always drawn, from its own (already smoothed) position */
+    public void renderRemote(Level level, double x, double feetY, double z, float bodyYaw, boolean dithered, PlayerCamera camera) {
+        draw(level, x, feetY, z, bodyYaw, camera.getX(), camera.getZ(), camera.getYaw(), dithered);
+    }
+
+    /**
+     * the local player, always drawn, for a viewer that is not the PlayerCamera (screenshots). viewX / viewZ is where the
+     * viewer is (it picks the frame), viewYaw the way it looks (the sprite turns to face it)
+     */
+    public void renderSeenFrom(Level level, Player player, float partialTicks, double viewX, double viewZ, float viewYaw) {
         double x = player.prevX + (player.x - player.prevX) * partialTicks;
         double z = player.prevZ + (player.z - player.prevZ) * partialTicks;
         double feetY = player.prevY + (player.y - player.prevY) * partialTicks - Player.EYE_HEIGHT;
 
-        draw(level, x, feetY, z, player.getBodyYaw(partialTicks), camera);
+        draw(level, x, feetY, z, player.getBodyYaw(partialTicks), viewX, viewZ, viewYaw, player.noClip);
     }
 
-    /** another player of a multiplayer game: always drawn, from its own (already smoothed) position */
-    public void renderRemote(Level level, double x, double feetY, double z, float bodyYaw, PlayerCamera camera) {
-        draw(level, x, feetY, z, bodyYaw, camera);
+    /** another player of a multiplayer game, for a viewer that is not the PlayerCamera (see renderSeenFrom) */
+    public void renderRemoteSeenFrom(Level level, double x, double feetY, double z, float bodyYaw, boolean dithered,
+                                     double viewX, double viewZ, float viewYaw) {
+        draw(level, x, feetY, z, bodyYaw, viewX, viewZ, viewYaw, dithered);
     }
 
-    private void draw(Level level, double x, double feetY, double z, float bodyYaw, PlayerCamera camera) {
+    // dithered: a player walking through blocks is drawn through a checkerboard, half see-through
+    private void draw(Level level, double x, double feetY, double z, float bodyYaw,
+                      double viewX, double viewZ, float viewYaw, boolean dithered) {
         if (!ensureTexture()) {
             return;
         }
 
-        int frame = frameFor(bodyYaw, camera.getX() - x, camera.getZ() - z);
+        int frame = frameFor(bodyYaw, viewX - x, viewZ - z);
 
         // Lit like a billboard tile standing in the same spot.
         int cellX = (int) Math.floor(x);
@@ -69,26 +123,89 @@ public final class PlayerRenderer {
         float u1 = (frame + 1) / (float) this.frames;
 
         int program = glGetInteger(GL20.GL_CURRENT_PROGRAM);
+        if (!ensureProgram()) {
+            return;
+        }
         glPushAttrib(GL_ENABLE_BIT | GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_TEXTURE_BIT | GL_CURRENT_BIT);
-        GL20.glUseProgram(0);
+        GL20.glUseProgram(this.spriteProgram);
+        GL20.glUniform2f(this.sheetSizeLocation, this.sheetWidth, this.sheetHeight);
 
         glEnable(GL_TEXTURE_2D);
         glBindTexture(GL_TEXTURE_2D, this.texture);
         glDisable(GL_FOG);
         glDisable(GL_CULL_FACE);
         glDisable(GL_BLEND);
-        glEnable(GL_ALPHA_TEST);
-        glAlphaFunc(GL_GREATER, 0.5F);
+        glDisable(GL_ALPHA_TEST);
         glDepthMask(true);
 
-        Billboard.draw(x, feetY, z,
-                FRAME_WIDTH / (float) PIXELS_PER_BLOCK, FRAME_HEIGHT / (float) PIXELS_PER_BLOCK,
-                Billboard.rightX(camera.getYaw()), Billboard.rightZ(camera.getYaw()),
-                u0, 0.0F, u1, 1.0F,
+        float width = FRAME_WIDTH / (float) PIXELS_PER_BLOCK;
+        float height = FRAME_HEIGHT / (float) PIXELS_PER_BLOCK;
+        double rightX = Billboard.rightX(viewYaw);
+        double rightZ = Billboard.rightZ(viewYaw);
+
+        if (dithered) {
+            // a player inside the blocks: where the blocks hide the sprite, its silhouette shows through them as a dark dither
+            GL20.glUniform1f(this.modeLocation, 2.0F);
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            int depthFunc = glGetInteger(GL_DEPTH_FUNC);
+            glDepthFunc(GL_GREATER);
+            glDepthMask(false);
+            Billboard.draw(x, feetY, z, width, height, rightX, rightZ, u0, 0.0F, u1, 1.0F,
+                    1.0F, 1.0F, 1.0F, 1.0F);
+            glDepthFunc(depthFunc);
+            glDepthMask(true);
+            glDisable(GL_BLEND);
+        }
+
+        // the sprite itself, half see-through when dithered
+        GL20.glUniform1f(this.modeLocation, dithered ? 1.0F : 0.0F);
+        Billboard.draw(x, feetY, z, width, height, rightX, rightZ, u0, 0.0F, u1, 1.0F,
                 brightness, brightness, brightness, 1.0F);
 
         glPopAttrib();
         GL20.glUseProgram(program);
+    }
+
+    private boolean ensureProgram() {
+        if (this.spriteProgram != 0) {
+            return true;
+        }
+        if (this.loadFailed) {
+            return false;
+        }
+        try {
+            int vs = compile(GL20.GL_VERTEX_SHADER, VERT);
+            int fs = compile(GL20.GL_FRAGMENT_SHADER, FRAG);
+            int p = GL20.glCreateProgram();
+            GL20.glAttachShader(p, vs);
+            GL20.glAttachShader(p, fs);
+            GL20.glLinkProgram(p);
+            if (GL20.glGetProgrami(p, GL20.GL_LINK_STATUS) == 0) {
+                throw new RuntimeException(GL20.glGetProgramInfoLog(p, 4096));
+            }
+            GL20.glUseProgram(p);
+            GL20.glUniform1i(GL20.glGetUniformLocation(p, "tex"), 0);
+            GL20.glUseProgram(0);
+            this.sheetSizeLocation = GL20.glGetUniformLocation(p, "sheetSize");
+            this.modeLocation = GL20.glGetUniformLocation(p, "mode");
+            this.spriteProgram = p;
+            return true;
+        } catch (RuntimeException e) {
+            System.err.println("[PlayerRenderer] player sprite shader failed: " + e.getMessage());
+            this.loadFailed = true;
+            return false;
+        }
+    }
+
+    private static int compile(int type, String source) {
+        int shader = GL20.glCreateShader(type);
+        GL20.glShaderSource(shader, source);
+        GL20.glCompileShader(shader);
+        if (GL20.glGetShaderi(shader, GL20.GL_COMPILE_STATUS) == 0) {
+            throw new RuntimeException(GL20.glGetShaderInfoLog(shader, 4096));
+        }
+        return shader;
     }
 
     // which frame to show: the angle between the body's facing and the direction to the camera, in 45 degree steps counted toward the player's right
@@ -127,6 +244,8 @@ public final class PlayerRenderer {
             int width = image.getWidth();
             int height = image.getHeight();
             this.frames = Math.max(1, width / FRAME_WIDTH);
+            this.sheetWidth = width;
+            this.sheetHeight = height;
 
             int[] pixels = image.getRGB(0, 0, width, height, null, 0, width);
             ByteBuffer buffer = BufferUtils.createByteBuffer(width * height * 4);

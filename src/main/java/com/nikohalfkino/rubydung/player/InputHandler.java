@@ -57,6 +57,13 @@ public class InputHandler {
             return;
         }
 
+        // Carrying a weighted cube: the wheel moves it nearer or farther (and does not change the selected tile).
+        PlayerInteraction interaction = this.game.getPlayerInteraction();
+        if (interaction != null && interaction.isHoldingCube()) {
+            interaction.scrollCube(wheel > 0 ? 1 : -1);
+            return;
+        }
+
         Player player = this.game.getPlayer();
         boolean ctrlHeld = KeyBinding.FLY_SPEED_MODIFIER.isDown() || KeyMap.isDown(KeyMap.RCONTROL);
 
@@ -148,10 +155,17 @@ public class InputHandler {
         } else if (key == KeyMap.ESC) {
             this.game.openScreen(new PauseScreen(this.game, this.game.getFont()));
         } else if (key == KeyBinding.INVENTORY.getKey()) {
-            this.game.openScreen(new InventoryScreen(this.game));
+            // the tile selection is locked while a cube is carried
+            if (!this.game.getPlayerInteraction().isHoldingCube()) {
+                this.game.openScreen(new InventoryScreen(this.game));
+            }
         } else if (key == KeyBinding.CHAT.getKey() && this.game.hasWorld()) {
             this.game.openScreen(new ChatScreen(this.game));
         } else if (key == KeyBinding.INTERACT.getKey()) {
+            // A weighted cube: drops the one in the hands, or picks up the one under the crosshair.
+            if (this.game.getPlayerInteraction().interactWithCube()) {
+                return;
+            }
             // Wooden doors react straight away (and swing the hand themselves).
             if (this.game.getPlayerInteraction().interact()) {
                 return;
@@ -160,15 +174,21 @@ public class InputHandler {
                 HandHud.swingCurrent(HandHud.Action.INTERACT);
             }
             int[] door = this.game.getPlayerInteraction().getTargetedDoorOrigin();
-            if (door != null && !Multiplayer.isActive()) {
+            if (door != null && Multiplayer.doorsAllowed()) {
                 this.game.openScreen(new DimensionalDoorScreen(this.game, door[0], door[1], door[2]));
+            } else if (door != null) {
+                this.game.getChatLog().notice(Multiplayer.isHosting()
+                        ? "Dimensional doors do not work in a LAN game"
+                        : "Dimensional doors are off on this server (it needs more than one world)");
             }
         } else if (key == KeyBinding.KNOCK.getKey()) {
             this.game.getPlayerInteraction().knock();
         } else if (key == KeyBinding.DEBUG_HUD.getKey()) {
             this.game.getDebugHud().toggle();
         } else if (key == KeyBinding.PICK_BLOCK.getKey() || key == Keyboard.KEY_RMENU) {
-            this.game.getPlayerInteraction().pickTargetedTile();
+            if (!this.game.getPlayerInteraction().isHoldingCube()) {
+                this.game.getPlayerInteraction().pickTargetedTile();
+            }
         } else if (key == KeyBinding.FLY_TOGGLE.getKey()) {
             Player player = this.game.getPlayer();
             player.flying = !player.flying;

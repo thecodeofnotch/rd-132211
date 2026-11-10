@@ -1,6 +1,6 @@
 package com.nikohalfkino.rubydung.render;
 
-import com.nikohalfkino.rubydung.level.tiles.LiquidTile;
+import com.nikohalfkino.rubydung.level.tiles.special.LiquidTile;
 import org.lwjgl.BufferUtils;
 import org.lwjgl.opengl.GL20;
 

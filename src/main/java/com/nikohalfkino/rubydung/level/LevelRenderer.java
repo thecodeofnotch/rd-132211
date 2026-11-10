@@ -1,8 +1,10 @@
 package com.nikohalfkino.rubydung.level;
 
+import com.nikohalfkino.rubydung.player.ChessSelection;
 import com.nikohalfkino.rubydung.player.HitResult;
-import com.nikohalfkino.rubydung.level.tiles.BillboardTile;
-import com.nikohalfkino.rubydung.level.tiles.LiquidTile;
+import com.nikohalfkino.rubydung.level.tiles.special.ChessPieceTile;
+import com.nikohalfkino.rubydung.level.tiles.common.BillboardTile;
+import com.nikohalfkino.rubydung.level.tiles.special.LiquidTile;
 import com.nikohalfkino.rubydung.level.tiles.Tile;
 import com.nikohalfkino.rubydung.phys.AABB;
 import com.nikohalfkino.rubydung.render.*;
@@ -333,7 +335,9 @@ public class LevelRenderer implements LevelListener {
         this.parallel = true;
 
         // leave a core for the render thread (and one more for the OS / GC), otherwise frames stall while chunks build
-        int threads = Math.max(1, Runtime.getRuntime().availableProcessors() - 2);
+        // -Dstrata.chunkThreads=N sets it by hand (two games on one PC should not each take every core)
+        int threads = Integer.getInteger("strata.chunkThreads", Math.max(1, Runtime.getRuntime().availableProcessors() - 2));
+        threads = Math.max(1, threads);
         for (int t = 0; t < threads; t++) {
             Thread worker = new Thread(() -> buildWorker(generation), "chunk-build-" + t);
             worker.setDaemon(true);
@@ -504,6 +508,7 @@ public class LevelRenderer implements LevelListener {
      * picks the chunks and sorts them far to near.
      */
     public void renderBillboards(float cameraYaw, float cameraPitch, double eyeX, double eyeY, double eyeZ) {
+        this.billboardAuraChunkCount = 0;
         if (Double.isNaN(eyeX)) {
             // the shader needs the eye for the growth with distance
             CameraRay.setAngles(cameraYaw, cameraPitch);
@@ -559,6 +564,7 @@ public class LevelRenderer implements LevelListener {
         }
         FrameProfiler.lap("bb-collect");
 
+        this.billboardAuraChunkCount = count;
         if (count == 0) {
             return;
         }
@@ -595,7 +601,8 @@ public class LevelRenderer implements LevelListener {
             Textures.bind(Chunk.getAtlasTexture());
 
             if (this.billboardCutoutIds.limit() > 0) {
-                glDisable(GL_BLEND);
+                glEnable(GL_BLEND);
+                glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
                 glCallLists(this.billboardCutoutIds);
                 FrameProfiler.lap("bb-cutout");
             }
@@ -621,6 +628,80 @@ public class LevelRenderer implements LevelListener {
             }
         }
         FrameProfiler.lap("bb-draw");
+    }
+
+    private void drawBillboardAuraLists() {
+        if (this.billboardAuraCutoutIds.limit() > 0) {
+            glCallLists(this.billboardAuraCutoutIds);
+        }
+        if (this.billboardAuraIds.limit() > 0) {
+            glCallLists(this.billboardAuraIds);
+        }
+    }
+
+    private IntBuffer billboardAuraCutoutIds = BufferUtils.createIntBuffer(1024);
+    private IntBuffer billboardAuraIds = BufferUtils.createIntBuffer(1024);
+    private int billboardAuraChunkCount = 0;
+
+    /**
+     * The glow of the sprites that have one (BillboardAura). Call it after renderLiquids: it is blended over everything
+     * already drawn, far to near, and it reads the depth buffer without writing it, so the water, the sprites and the glows
+     * behind it still show through, which they did not when the glow was drawn with its sprite and wrote depth.
+     * Uses the chunk order renderBillboards just sorted.
+     */
+    public void renderBillboardAuras(float cameraYaw, double eyeX, double eyeY, double eyeZ) {
+        int count = this.billboardAuraChunkCount;
+        if (count == 0 || Double.isNaN(eyeX)) {
+            return;
+        }
+        this.billboardAuraCutoutIds = fillBillboardIds(this.billboardAuraCutoutIds, Chunk.LAYER_BILLBOARD_CUTOUT, count, false);
+        this.billboardAuraIds = fillBillboardIds(this.billboardAuraIds, Chunk.LAYER_BILLBOARD, count, false);
+        if (this.billboardAuraCutoutIds.limit() == 0 && this.billboardAuraIds.limit() == 0) {
+            return;
+        }
+
+        boolean cull = glIsEnabled(GL_CULL_FACE);
+        boolean blend = glIsEnabled(GL_BLEND);
+        boolean alphaTest = glIsEnabled(GL_ALPHA_TEST);
+        boolean depthMask = glGetBoolean(GL_DEPTH_WRITEMASK);
+        glDisable(GL_CULL_FACE);
+
+        float rotRad = (float) Math.toRadians(-cameraYaw);
+        float rightX = (float) Math.cos(rotRad);
+        float rightZ = (float) -Math.sin(rotRad);
+        StaticBillboardShader.bind(eyeX, eyeY, eyeZ, rightX, rightZ, BILLBOARD_REACH_PER_BLOCK, BILLBOARD_MAX_REACH,
+                this.level.getSkyAmbient(), CUTOUT_ALPHA);
+        try {
+            glEnable(GL_TEXTURE_2D);
+            glDisable(GL_ALPHA_TEST);
+            glEnable(GL_BLEND);
+            glDepthMask(false);
+            Textures.bind(Chunk.getAtlasTexture());
+
+            // the colour is premultiplied by the shader: src + dst * (1 - alpha) is NORMAL (alpha = the opacity) and ADD (alpha 0)
+            StaticBillboardShader.setAuraPass(1);
+            glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+            drawBillboardAuraLists();
+
+            // SCREEN: src + dst * (1 - src), per channel
+            StaticBillboardShader.setAuraPass(2);
+            glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_COLOR);
+            drawBillboardAuraLists();
+        } finally {
+            glDepthMask(depthMask);
+            if (!blend) {
+                glDisable(GL_BLEND);
+            }
+            if (alphaTest) {
+                glEnable(GL_ALPHA_TEST);
+            }
+            StaticBillboardShader.unbind();
+            glDisable(GL_TEXTURE_2D);
+            if (cull) {
+                glEnable(GL_CULL_FACE);
+            }
+        }
+        FrameProfiler.lap("bb-aura");
     }
 
     private IntBuffer billboardCutoutIds = BufferUtils.createIntBuffer(1024);
@@ -689,6 +770,70 @@ public class LevelRenderer implements LevelListener {
         glDisable(GL_POLYGON_OFFSET_FILL);
 
         glDisable(GL_BLEND);
+    }
+
+    /**
+     * lights up the squares the picked chess piece may go to and the square it stands on, as pulsing tiles lying on the floor of the piece's level,
+     * blue for a white piece and red for a black one (the square it stands on is paler, the squares where a piece would be taken are stronger).
+     * fixed function, no texture, call with texturing off like renderHit
+     */
+    public void renderChessSelection(ChessSelection selection) {
+        if (selection == null || !selection.isActive()) {
+            return;
+        }
+
+        float pulse = (float) Math.sin(System.currentTimeMillis() / 150.0) * 0.12f + 0.5f;
+        int y = selection.getY();
+
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        glEnable(GL_POLYGON_OFFSET_FILL);
+        glPolygonOffset(-2.0F, -4.0F);
+        glDepthMask(false);
+
+        float[] side = selection.isWhite() ? new float[]{0.2f, 0.45f, 1.0f} : new float[]{1.0f, 0.2f, 0.15f};
+
+        glColor4f(side[0] * 0.5f + 0.5f, side[1] * 0.5f + 0.5f, side[2] * 0.5f + 0.5f, pulse);
+        this.tessellator.init();
+        addChessSquare(selection.getX(), y, selection.getZ());
+        this.tessellator.flush();
+
+        glColor4f(side[0], side[1], side[2], pulse);
+        this.tessellator.init();
+        for (ChessPieceTile.Move move : selection.getMoves()) {
+            if (!move.capture) {
+                addChessSquare(move.x, y, move.z);
+            }
+        }
+        this.tessellator.flush();
+
+        glColor4f(side[0], side[1], side[2], Math.min(1.0f, pulse + 0.3f));
+        this.tessellator.init();
+        for (ChessPieceTile.Move move : selection.getMoves()) {
+            if (move.capture) {
+                addChessSquare(move.x, y, move.z);
+            }
+        }
+        this.tessellator.flush();
+
+        glDepthMask(true);
+        glDisable(GL_POLYGON_OFFSET_FILL);
+        glDisable(GL_BLEND);
+    }
+
+    // one lit square on the floor of the cell, a little inside its edges so neighbouring squares stay apart
+    private void addChessSquare(int x, int y, int z) {
+        float inset = 0.04F;
+        float top = y - this.level.getBillboardDrop(x, y, z) + 0.02F;
+        float minX = x + inset;
+        float maxX = x + 1.0F - inset;
+        float minZ = z + inset;
+        float maxZ = z + 1.0F - inset;
+
+        this.tessellator.vertex(maxX, top, maxZ);
+        this.tessellator.vertex(maxX, top, minZ);
+        this.tessellator.vertex(minX, top, minZ);
+        this.tessellator.vertex(minX, top, maxZ);
     }
 
     private void renderLiquidHit(HitResult hit) {

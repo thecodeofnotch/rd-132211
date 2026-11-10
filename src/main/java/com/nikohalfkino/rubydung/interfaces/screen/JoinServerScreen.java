@@ -24,10 +24,9 @@ public class JoinServerScreen extends MenuScreen {
     private static final float SECTION_GAP = 16.0f;
     private static final int MAX_ADDRESS_LENGTH = 64;
 
-    // remembered until the game is closed
-    private static String lastAddress = "";
-
     private final TextInput addressInput;
+    // asked for when the server has one, never saved
+    private final TextInput passwordInput;
     private String message;
 
     public JoinServerScreen(RubyDung game) {
@@ -54,7 +53,12 @@ public class JoinServerScreen extends MenuScreen {
         panel.add(new Label("Server address").setColor(UiStyle.TEXT_DIM));
         this.addressInput = panel.add(
                 new TextInput("", PANEL_WIDTH, FIELD_HEIGHT, MAX_ADDRESS_LENGTH), ITEM_GAP);
-        this.addressInput.setText(lastAddress);
+        // remembered between runs: GameSettings keeps it in options.txt
+        this.addressInput.setText(GameSettings.getLastServer());
+
+        panel.add(new Label("Password (if the server has one)").setColor(UiStyle.TEXT_DIM), SECTION_GAP);
+        this.passwordInput = panel.add(
+                new TextInput("", PANEL_WIDTH, FIELD_HEIGHT, Protocol.MAX_PASSWORD_LENGTH).setMasked(true), ITEM_GAP);
 
         panel.add(new Label(() -> "Port " + Protocol.DEFAULT_PORT + " if you leave it out. Playing as "
                 + GameSettings.getUsername()).setColor(UiStyle.TEXT_DIM), SECTION_GAP);
@@ -79,8 +83,10 @@ public class JoinServerScreen extends MenuScreen {
             this.message = "Enter the server's address";
             return;
         }
-        lastAddress = address;
-        Multiplayer.connect(this.game, address);
+        // saved before connecting, so a server that is down or refuses us is still there to retry next time
+        GameSettings.setLastServer(address);
+        GameSettings.save();
+        Multiplayer.connect(this.game, address, this.passwordInput.getText());
     }
 
     private void back() {

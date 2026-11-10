@@ -29,6 +29,7 @@ public class TextField {
     private int selectionAnchor = 0;
     private int scrollPosition = 0;
     private boolean isPressed = false;
+    private boolean masked = false;
 
     public TextField() {
     }
@@ -81,7 +82,7 @@ public class TextField {
         int currentWidth = textX;
 
         for (int i = this.scrollPosition; i < visibleEnd; i++) {
-            String sub = this.text.substring(this.scrollPosition, i + 1);
+            String sub = shown().substring(this.scrollPosition, i + 1);
             int nextWidth = textX + font.width(sub);
 
             if (mouseX < (currentWidth + nextWidth) / 2) {
@@ -101,7 +102,7 @@ public class TextField {
         this.scrollPosition = Math.max(0, Math.min(this.scrollPosition, this.text.length()));
 
         while (this.scrollPosition < this.cursorPosition) {
-            String visible = this.text.substring(this.scrollPosition, this.cursorPosition);
+            String visible = shown().substring(this.scrollPosition, this.cursorPosition);
 
             if (font.width(visible) <= textWidth) {
                 break;
@@ -120,7 +121,7 @@ public class TextField {
         int end = this.scrollPosition;
 
         while (end < this.text.length()) {
-            String visible = this.text.substring(this.scrollPosition, end + 1);
+            String visible = shown().substring(this.scrollPosition, end + 1);
 
             if (font.width(visible) > textWidth) {
                 break;
@@ -163,8 +164,10 @@ public class TextField {
             }
 
             if (key == Keyboard.KEY_X) {
-                copySelection();
-                deleteSelection();
+                if (!this.masked) {
+                    copySelection();
+                    deleteSelection();
+                }
                 return true;
             }
 
@@ -247,7 +250,7 @@ public class TextField {
     }
 
     private void copySelection() {
-        if (!hasSelection()) {
+        if (this.masked || !hasSelection()) {
             return;
         }
 
@@ -300,6 +303,30 @@ public class TextField {
         this.text.insert(this.cursorPosition, clean);
         this.cursorPosition += clean.length();
         this.selectionAnchor = this.cursorPosition;
+    }
+
+    /** on: the text is drawn as asterisks and can't be copied or cut (a password) */
+    public TextField setMasked(boolean masked) {
+        this.masked = masked;
+        return this;
+    }
+
+    public boolean isMasked() {
+        return this.masked;
+    }
+
+    /** what is drawn: the text, or one '*' per character when masked */
+    public String getDisplayText() {
+        return shown();
+    }
+
+    private String shown() {
+        if (!this.masked) {
+            return this.text.toString();
+        }
+        char[] stars = new char[this.text.length()];
+        java.util.Arrays.fill(stars, '*');
+        return new String(stars);
     }
 
     /** null = plain text */
@@ -370,7 +397,7 @@ public class TextField {
         ensureCursorVisible(font, availableWidth, prefix);
 
         int visibleEnd = getVisibleEnd(font, availableWidth, prefix);
-        String visibleText = this.text.substring(this.scrollPosition, visibleEnd);
+        String visibleText = shown().substring(this.scrollPosition, visibleEnd);
 
         int visibleSelectionStart = Math.max(
                 Math.min(this.cursorPosition, this.selectionAnchor),
@@ -383,8 +410,8 @@ public class TextField {
         );
 
         if (visibleSelectionStart < visibleSelectionEnd) {
-            String beforeSelection = this.text.substring(this.scrollPosition, visibleSelectionStart);
-            String selected = this.text.substring(visibleSelectionStart, visibleSelectionEnd);
+            String beforeSelection = shown().substring(this.scrollPosition, visibleSelectionStart);
+            String selected = shown().substring(visibleSelectionStart, visibleSelectionEnd);
 
             int selectXOffset = font.width(prefix + beforeSelection);
             int selectWidth = font.width(selected);
@@ -404,7 +431,7 @@ public class TextField {
 
         if (showCursor && !hasSelection()) {
             int cursorX = x + font.width(
-                    prefix + this.text.substring(this.scrollPosition, this.cursorPosition)
+                    prefix + shown().substring(this.scrollPosition, this.cursorPosition)
             );
 
             font.drawString("_", cursorX, y, color);

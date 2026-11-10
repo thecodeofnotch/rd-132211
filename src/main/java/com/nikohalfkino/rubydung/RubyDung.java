@@ -15,9 +15,10 @@ import com.nikohalfkino.rubydung.interfaces.hud.HandHud;
 import com.nikohalfkino.rubydung.interfaces.hud.InteractPromptHud;
 import com.nikohalfkino.rubydung.interfaces.hud.SelectedTileHud;
 import com.nikohalfkino.rubydung.interfaces.widget.Anchor;
+import com.nikohalfkino.rubydung.interfaces.screen.LoadingScreen;
 import com.nikohalfkino.rubydung.interfaces.screen.TitleScreen;
 import com.nikohalfkino.rubydung.level.*;
-import com.nikohalfkino.rubydung.level.tiles.DoorColor;
+import com.nikohalfkino.rubydung.level.tiles.special.DoorColor;
 import com.nikohalfkino.rubydung.level.tiles.Tile;
 import com.nikohalfkino.rubydung.net.Multiplayer;
 import com.nikohalfkino.rubydung.level.generation.LevelGenerator;
@@ -79,6 +80,9 @@ public class RubyDung implements Runnable {
     // only counts while the game is running
     private int ticksSinceAutosave = 0;
     private boolean running = true;
+
+    /** frames per second of a window that is not the active one */
+    private static final int INACTIVE_FPS = 20;
 
     // tasks handed back to the game thread (e.g. from the save thread)
     private final Queue<Runnable> mainThreadTasks = new ConcurrentLinkedQueue<>();
@@ -375,21 +379,37 @@ public class RubyDung implements Runnable {
         this.running = false;
     }
 
+    /**
+     * every step runs even if an earlier one fails: the save queue's thread is not a daemon, so one step that throws and skips
+     * SaveQueue.shutdownAndWait() used to leave the JVM alive (the window gone, the process still there)
+     */
     public void destroy() {
-        Multiplayer.shutdown("Game closed");
-        saveLevel();
-        GameSettings.save();
-        KeyBinding.save();
-        JTalkSettings.save();
-        AutosaveSettings.save();
-        SaveQueue.shutdownAndWait();
-        this.session.dispose();
-        this.speaker.stop();
-        this.musicPlayer.stop();
+        attempt("leaving the network", () -> Multiplayer.shutdown("Game closed"));
+        attempt("saving the level", this::saveLevel);
+        attempt("saving the settings", () -> {
+            GameSettings.save();
+            KeyBinding.save();
+            JTalkSettings.save();
+            AutosaveSettings.save();
+        });
+        attempt("finishing the saves", SaveQueue::shutdownAndWait);
+        attempt("closing the session", () -> this.session.dispose());
+        attempt("stopping the voice", () -> this.speaker.stop());
+        attempt("stopping the music", () -> this.musicPlayer.stop());
+        attempt("closing the input", () -> {
+            Mouse.destroy();
+            Keyboard.destroy();
+        });
+        attempt("closing the window", Display::destroy);
+    }
 
-        Mouse.destroy();
-        Keyboard.destroy();
-        Display.destroy();
+    private static void attempt(String what, Runnable step) {
+        try {
+            step.run();
+        } catch (Throwable t) {
+            System.out.println("Shutdown: failed " + what + ": " + t);
+            t.printStackTrace();
+        }
     }
 
     @Override
@@ -427,8 +447,15 @@ public class RubyDung implements Runnable {
 
                 this.gameRenderer.render(this.timer.partialTicks);
 
-                if (GameSettings.getFpsCap() != GameSettings.UNCAPPED_FPS) {
-                    Display.sync(GameSettings.getFpsCap());
+                // a window that is not in front (another instance has the focus, or it is covered or minimized) has no reason to
+                // draw at full speed: vsync is often ignored for it, and two games on one PC would fight over the GPU. the ticks
+                // do not depend on the frame rate, so a LAN host in the background still serves the others
+                int fpsCap = GameSettings.getFpsCap();
+                if (!Display.isActive()) {
+                    fpsCap = fpsCap == GameSettings.UNCAPPED_FPS ? INACTIVE_FPS : Math.min(fpsCap, INACTIVE_FPS);
+                }
+                if (fpsCap != GameSettings.UNCAPPED_FPS) {
+                    Display.sync(fpsCap);
                 }
 
                 while (System.currentTimeMillis() >= lastTime + 1000L) {
@@ -436,10 +463,12 @@ public class RubyDung implements Runnable {
                     lastTime += 1000L;
                 }
             }
-        } catch (Exception e) {
+        } catch (Throwable e) {
             e.printStackTrace();
         } finally {
             destroy();
+            // nothing may keep the process alive once the game is closed (a thread left over, a save still pending)
+            System.exit(0);
         }
     }
 
@@ -453,13 +482,21 @@ public class RubyDung implements Runnable {
             saveWorldTime();
         }
 
-        if (!hasWorld() || this.currentScreen != null || this.console.isOpen() || !Display.isActive()) {
+        if (!hasWorld() || isGameFrozen()) {
             return;
         }
 
+        // Alone, a menu / the console / a lost window focus stops the game. In multiplayer the world is shared and
+        // keeps running: the player just stops reacting to the keys and mouse (they belong to the menu).
+        boolean inputBlocked = this.currentScreen != null || this.console.isOpen() || !Display.isActive();
+        if (inputBlocked && !Multiplayer.isActive()) {
+            return;
+        }
+        getPlayer().screenLocked = inputBlocked;
+
         // The world clock only runs while the game does, so it pauses with menus, the console and loading.
         this.dayNightCycle.tick(this.timer.partialTicks);
-        this.session.tick();
+        this.session.tick(!inputBlocked);
 
         // An autosave under way copies the world a slice per tick instead of all at once.
         getLevel().tickAutosave();
@@ -469,6 +506,20 @@ public class RubyDung implements Runnable {
                 && ++this.ticksSinceAutosave >= AutosaveSettings.getIntervalMinutes() * 60 * TICKS_PER_SECOND) {
             autosave();
         }
+    }
+
+    /**
+     * true while the world must stand still: loading always, and any screen alone. with other players (hosting a LAN
+     * game or joined to a server) screens never stop the world, the others keep playing
+     */
+    public boolean isGameFrozen() {
+        if (this.currentScreen == null) {
+            return false;
+        }
+        if (this.currentScreen instanceof LoadingScreen) {
+            return true;
+        }
+        return this.currentScreen.pausesGame() && !Multiplayer.isActive();
     }
 
     public void openScreen(Screen screen) {
@@ -482,7 +533,7 @@ public class RubyDung implements Runnable {
         if (screen.pausesGame()) {
             Mouse.setGrabbed(false);
 
-            if (hasWorld()) {
+            if (hasWorld() && isGameFrozen()) {
                 Display.setTitle(PAUSED_TITLE);
             }
         }
@@ -510,7 +561,7 @@ public class RubyDung implements Runnable {
                 this.windowManager.applyMode();
 
                 // The window may have been recreated.
-                Display.setTitle(this.currentScreen != null && this.currentScreen.pausesGame() && hasWorld()
+                Display.setTitle(hasWorld() && isGameFrozen()
                         ? PAUSED_TITLE : GAME_TITLE);
                 Display.setIcon(Textures.loadIcons("/assets/rubydung/icon.png"));
 

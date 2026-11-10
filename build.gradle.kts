@@ -67,6 +67,26 @@ tasks.register<JavaExec>("run") {
     dependsOn("extractNatives", "stageJTalk")
 }
 
+// Dedicated server with a small window (log + command line). Data (worlds, server/ settings) goes to run-server/.
+//   gradlew runServer                      (opens the world settings window first)
+//   gradlew runServer -PserverArgs="--world MyWorld --port 25566 --max-players 8"
+// no natives needed: the server has no window of the game and never touches OpenGL
+tasks.register<JavaExec>("runServer") {
+    group = "application"
+    description = "Runs a dedicated server with a window showing its log and a command line."
+    mainClass.set("com.nikohalfkino.rubydung.net.ServerLauncher")
+    classpath = sourceSets["main"].runtimeClasspath
+    workingDir = file("${project.projectDir}/run-server")
+    jvmArgs = listOf(
+        "-Xmx2g",
+        "-Dstrata.dataDir=${project.projectDir}/run-server"
+    )
+    val extra = (findProperty("serverArgs") as String?)?.trim()?.split(Regex("\\s+"))?.filter { it.isNotEmpty() } ?: emptyList()
+    // no serverArgs: the launcher asks for the world settings in a window. with serverArgs it skips that and starts at once
+    args = if (extra.isEmpty()) emptyList() else listOf("--gui") + extra
+    doFirst { workingDir.mkdirs() }
+}
+
 val osName = System.getProperty("os.name").lowercase()
 
 val targetOs: String = (findProperty("targetOs") as String?) ?: when {
@@ -210,5 +230,58 @@ tasks.register<Exec>("packageInstaller") {
         }
 
         commandLine(args)
+    }
+}
+
+// ── Dedicated server package (no game window, no natives, no JTalk) ──────────
+//
+//   gradlew packageServer -PappVersion=1.0.0   ->  build/server-package/Strata-Server  (app image with its own Java)
+//
+// starts ServerLauncher: a small window for the world settings, then the server with its log window.
+// started with arguments it skips the window and works like ServerMain's command line.
+val serverMainClass = "com.nikohalfkino.rubydung.net.ServerLauncher"
+val serverInputDir = layout.buildDirectory.dir("server-input")
+val serverOutputDir = layout.buildDirectory.dir("server-package")
+
+tasks.register<com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar>("serverJar") {
+    group = "distribution"
+    archiveFileName.set("strata-server-${project.version}.jar")
+    from(sourceSets["main"].output)
+    configurations = listOf(project.configurations.runtimeClasspath.get())
+    manifest { attributes["Main-Class"] = serverMainClass }
+}
+
+tasks.register<Sync>("prepareServerInput") {
+    dependsOn("serverJar")
+    into(serverInputDir)
+    from(tasks.named<com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar>("serverJar").flatMap { it.archiveFile })
+}
+
+tasks.register<Exec>("packageServer") {
+    group = "distribution"
+    description = "Packages the dedicated server (with its world settings window) as a portable app image."
+    dependsOn("prepareServerInput")
+
+    doFirst {
+        val outputDir = serverOutputDir.get().asFile
+        outputDir.deleteRecursively()
+        commandLine(
+            "jpackage",
+            "--type", "app-image",
+            "--name", "$appName-Server",
+            "--app-version", jpackageVersion,
+            "--input", serverInputDir.get().asFile.absolutePath,
+            "--main-jar", "strata-server-${project.version}.jar",
+            "--main-class", serverMainClass,
+            "--dest", outputDir.absolutePath,
+            // XL / XXL worlds need more: raise it here or start with --max-memory style JAVA_TOOL_OPTIONS
+            "--java-options", "-Xmx3g",
+        )
+    }
+
+    doLast {
+        File(serverOutputDir.get().asFile, "$appName-Server/portable.txt").writeText(
+            "Portable mode: worlds and server settings are stored in this folder.\n"
+        )
     }
 }

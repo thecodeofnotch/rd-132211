@@ -1,13 +1,13 @@
 package com.nikohalfkino.rubydung.console.commands;
 
 import com.nikohalfkino.rubydung.RubyDung;
-import com.nikohalfkino.rubydung.console.Command;
+import com.nikohalfkino.rubydung.console.LocalCommand;
 import com.nikohalfkino.rubydung.console.Console;
 
 import java.util.Arrays;
 import java.util.List;
 
-public class SingCommand implements Command {
+public class SingCommand extends LocalCommand {
 
     @Override
     public String name() {

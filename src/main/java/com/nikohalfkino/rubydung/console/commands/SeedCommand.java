@@ -1,9 +1,13 @@
 package com.nikohalfkino.rubydung.console.commands;
 
-import com.nikohalfkino.rubydung.RubyDung;
 import com.nikohalfkino.rubydung.console.ChatText;
+import com.nikohalfkino.rubydung.console.CommandArg;
 import com.nikohalfkino.rubydung.console.Command;
-import com.nikohalfkino.rubydung.console.Console;
+import com.nikohalfkino.rubydung.console.CommandContext;
+import com.nikohalfkino.rubydung.net.CommandTier;
+
+import java.util.Collections;
+import java.util.List;
 
 public class SeedCommand implements Command {
 
@@ -14,13 +18,31 @@ public class SeedCommand implements Command {
 
     @Override
     public String description() {
-        return "Displays the current world seed";
+        return "Displays the seed of the world you are in";
     }
 
     @Override
-    public void execute(RubyDung game, Console console, String[] args) {
-        long seed = game.getLevel().getSeed();
+    public CommandTier tier() {
+        return CommandTier.OP;
+    }
+
+    @Override
+    public Where where() {
+        return Where.WORLD;
+    }
+
+    @Override
+    public List<CommandArg> arguments() {
+        return Collections.emptyList();
+    }
+
+    @Override
+    public void execute(CommandContext ctx) {
+        if (!ctx.hasWorld()) {
+            ctx.say("No world loaded");
+            return;
+        }
         // in the chat the number can be clicked to copy it
-        console.println("World seed: " + ChatText.copyable(String.valueOf(seed)));
+        ctx.say("World seed: " + ChatText.copyable(String.valueOf(ctx.level().getSeed())));
     }
 }

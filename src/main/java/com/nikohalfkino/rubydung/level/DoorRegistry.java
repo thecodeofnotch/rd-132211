@@ -1,6 +1,6 @@
 package com.nikohalfkino.rubydung.level;
 
-import com.nikohalfkino.rubydung.level.tiles.DoorColor;
+import com.nikohalfkino.rubydung.level.tiles.special.DoorColor;
 
 import java.io.BufferedReader;
 import java.io.File;

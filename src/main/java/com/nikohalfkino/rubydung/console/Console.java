@@ -3,6 +3,8 @@ package com.nikohalfkino.rubydung.console;
 import com.nikohalfkino.rubydung.RubyDung;
 import com.nikohalfkino.rubydung.console.commands.*;
 import com.nikohalfkino.rubydung.interfaces.widget.TextField;
+import com.nikohalfkino.rubydung.net.Multiplayer;
+import com.nikohalfkino.rubydung.net.ServerCommands;
 import com.nikohalfkino.rubydung.util.KeyMap;
 import org.lwjgl.input.Keyboard;
 import org.lwjgl.input.Mouse;
@@ -14,7 +16,8 @@ public class Console {
     public static final int MAX_LOG_LINES = 200;
 
     private final RubyDung game;
-    private final Map<String, Command> commands = new HashMap<>();
+    // every command there is: the ones both sides share, the server's, and this game's own (see Command.Where)
+    private final CommandRegistry registry = new CommandRegistry();
     private final List<String> log = new ArrayList<>();
     private final List<String> commandHistory = new ArrayList<>();
 
@@ -30,21 +33,23 @@ public class Console {
     public Console(RubyDung game) {
         this.game = game;
 
-        register(new HelpCommand());
+        // the same commands a server has, so help, completion and routing know them all
+        this.registry.registerAll(SharedCommands.all());
+        this.registry.registerAll(ServerCommands.commands());
+
+        // what only this game can do
         register(new ClearCommand());
         register(new NoClipCommand());
-        register(new TeleportCommand());
         register(new FlyCommand());
         register(new ScreenshotCommand());
-        register(new SeedCommand());
         register(new RegenerateCommand());
-        register(new TimeCommand());
         register(new FreecamCommand());
         register(new SingCommand());
-        register(new LiquidCommand());
-        register(new SeaCommand());
         register(new VectorsCommand());
         register(new ChunkBordersCommand());
+
+        // the chat's ".command" asks the registry where a command runs before it is run
+        Multiplayer.useCommands(this.registry);
 
         // the input line is colourised and tab-completed like the chat's ".commands"
         this.syntax = new CommandSyntax(this::find, this::commands);
@@ -55,18 +60,21 @@ public class Console {
     }
 
     public void register(Command command) {
-        this.commands.put(command.name().toLowerCase(), command);
+        this.registry.register(command);
+    }
+
+    public CommandRegistry registry() {
+        return this.registry;
     }
 
     /** case-insensitive, null if there is none */
     public Command find(String name) {
-        return this.commands.get(name.toLowerCase());
+        return this.registry.find(name);
     }
 
+    /** the commands this player may run: on a server that depends on their tier there */
     public List<Command> commands() {
-        List<Command> list = new ArrayList<>(this.commands.values());
-        list.sort(Comparator.comparing(Command::name));
-        return list;
+        return this.registry.visibleTo(Multiplayer.localTier());
     }
 
     public boolean isOpen() {
@@ -190,7 +198,16 @@ public class Console {
 
         this.commandHistory.add(line);
         println("] " + line);
-        dispatch(line);
+
+        // typed here or in the chat, a line goes where it belongs: to the server when one is involved
+        List<String> routed = Multiplayer.runCommand(line);
+        if (routed == null) {
+            dispatch(line);
+        } else {
+            for (String reply : routed) {
+                println(reply);
+            }
+        }
     }
 
     /** runs a line and returns what it printed instead of logging it (for the chat screen's ".command") */
@@ -207,33 +224,7 @@ public class Console {
     }
 
     private void dispatch(String line) {
-        if (line.isEmpty()) {
-            return;
-        }
-
-        String[] parts = line.split("\\s+");
-        String name = parts[0].toLowerCase();
-        String[] args = new String[parts.length - 1];
-        System.arraycopy(parts, 1, args, 0, args.length);
-
-        Command command = this.commands.get(name);
-        if (command == null) {
-            println("Unknown command: " + name + " (try 'help')");
-            return;
-        }
-
-        // "<command> help" prints that command's detailed help instead of running it.
-        if (args.length == 1 && args[0].equalsIgnoreCase("help")) {
-            for (String helpLine : command.help()) {
-                println(helpLine);
-            }
-            return;
-        }
-
-        try {
-            command.execute(this.game, this, args);
-        } catch (Exception e) {
-            println("Error running '" + name + "': " + e.getMessage());
-        }
+        String[] words = CommandRegistry.split(line);
+        this.registry.execute(words, args -> new LocalContext(this.game, this, args, Multiplayer.localTier()));
     }
 }

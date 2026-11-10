@@ -64,24 +64,30 @@ public class PauseScreen extends FramePanelScreen {
                 .onClick(this.game::closeScreen));
         this.menu.add(new Button("Options", BUTTON_WIDTH, BUTTON_HEIGHT, true)
                 .onClick(() -> this.game.openScreen(new OptionsScreen(this.game))));
-        this.menu.add(new Button("Save", BUTTON_WIDTH, BUTTON_HEIGHT, true)
-                .onClick(() -> {
-                    this.game.saveLevel();
-                    this.saveMessageTicksRemaining = SAVED_MESSAGE_TICKS;
-                }));
+        // a world downloaded from a server is not ours to save
+        Button save = new Button("Save", BUTTON_WIDTH, BUTTON_HEIGHT, true);
+        save.onClick(() -> {
+            this.game.saveLevel();
+            this.saveMessageTicksRemaining = SAVED_MESSAGE_TICKS;
+        });
+        save.setVisibleWhen(() -> !Multiplayer.isClient());
+        this.menu.add(save);
 
         // Open to LAN: lets other players on the network join the world being played.
-        this.menu.add(new Button("Open to LAN", BUTTON_WIDTH, BUTTON_HEIGHT, true)
-                .onClick(() -> {
-                    String error = Multiplayer.hostLan(this.game, Protocol.DEFAULT_PORT);
-                    this.game.getChatLog().notice(error != null ? error : "The world is open to LAN.");
-                    this.game.closeScreen();
-                }));
+        // (not on a server of somebody else's, where there is no world of ours to open)
+        Button openToLan = new Button("Open to LAN", BUTTON_WIDTH, BUTTON_HEIGHT, true);
+        openToLan.onClick(() -> {
+            String error = Multiplayer.hostLan(this.game, Protocol.DEFAULT_PORT);
+            this.game.getChatLog().notice(error != null ? error : "The world is open to LAN.");
+            this.game.closeScreen();
+        });
+        openToLan.setVisibleWhen(() -> !Multiplayer.isClient());
+        this.menu.add(openToLan);
 
         // Quit (to the title screen) lives in the bottom-right corner of the frame.
         addCornerButton("Quit", this.game::quitToTitle);
 
-        // Current World: "name" - 12:00 PM, centred in the bar under the world view.
+        // Current World: "name" (or "Connected to ..." when joined), centred in the bar under the world view.
         this.worldInfo = add(new Label(this::worldInfoText).setColor(0xFFFFFF), Anchor.TOP_LEFT, 0, 0);
         this.worldInfo.setVisibleWhen(this::isFrameOpen);
 
@@ -140,6 +146,12 @@ public class PauseScreen extends FramePanelScreen {
     }
 
     private String worldInfoText() {
+        // joined to a server: "Connected to Name" (or "Connected to: ip:port") takes the place of the world line
+        String connected = Multiplayer.connectedTo();
+        if (connected != null) {
+            return connected;
+        }
+
         Level level = this.game.getLevel();
         if (level == null) {
             return "";
@@ -164,12 +176,15 @@ public class PauseScreen extends FramePanelScreen {
                 this.layout.viewWidth, this.layout.viewHeight,
                 0.0F, 0.0F, 0.0F, OVERLAY_ALPHA);
 
-        String paused = "Paused";
-        float textWidth = font.getWidth(paused) * PAUSED_SCALE;
-        font.drawStringScaled(paused,
-                (int) (this.layout.viewX + (this.layout.viewWidth - textWidth) / 2.0F),
-                (int) (this.layout.viewY + this.layout.viewHeight / 2.0F - (int) (6 * PAUSED_SCALE)),
-                0xFFFFFF, PAUSED_SCALE);
+        // with other players the world keeps running, so it is not "Paused" (the menu still darkens it)
+        if (!Multiplayer.isActive()) {
+            String paused = "Paused";
+            float textWidth = font.getWidth(paused) * PAUSED_SCALE;
+            font.drawStringScaled(paused,
+                    (int) (this.layout.viewX + (this.layout.viewWidth - textWidth) / 2.0F),
+                    (int) (this.layout.viewY + this.layout.viewHeight / 2.0F - (int) (6 * PAUSED_SCALE)),
+                    0xFFFFFF, PAUSED_SCALE);
+        }
 
         Gui2D.end();
     }

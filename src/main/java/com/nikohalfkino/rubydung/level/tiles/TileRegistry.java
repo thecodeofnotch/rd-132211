@@ -1,5 +1,19 @@
 package com.nikohalfkino.rubydung.level.tiles;
 
+import com.nikohalfkino.rubydung.level.tiles.special.LiquidTile;
+import com.nikohalfkino.rubydung.level.tiles.special.DoorColor;
+import com.nikohalfkino.rubydung.level.tiles.common.SlabTile;
+import com.nikohalfkino.rubydung.level.tiles.common.BillboardAura;
+import com.nikohalfkino.rubydung.level.tiles.common.BillboardTile;
+import com.nikohalfkino.rubydung.level.tiles.special.ChessPieceTile;
+import com.nikohalfkino.rubydung.level.tiles.special.CubeTile;
+import com.nikohalfkino.rubydung.level.tiles.special.DiceTile;
+import com.nikohalfkino.rubydung.level.tiles.special.TreeTile;
+import com.nikohalfkino.rubydung.level.tiles.special.DimensionalDoorTile;
+import com.nikohalfkino.rubydung.level.tiles.common.WrappedTile;
+import com.nikohalfkino.rubydung.level.tiles.common.RotatableTile;
+import com.nikohalfkino.rubydung.level.tiles.special.WoodenDoorTile;
+import com.nikohalfkino.rubydung.level.tiles.common.PaneTile;
 import com.nikohalfkino.rubydung.util.Registry;
 
 import java.util.ArrayList;
@@ -42,12 +56,12 @@ public final class TileRegistry {
     public static final Tile PILLAR        = register(new RotatableTile("pillar"));
     public static final Tile PILLAR_BOTTOM = register(new RotatableTile("pillar_bottom"));
 
-    public static final Tile COLUMN = register(new ColumnTile("column"));
+    public static final Tile COLUMN = register(new BillboardTile("column", 8.0F).occupyHeight());
 
-    public static final Tile STATUE = register(new StatueTile("statue"));
-    public static final Tile BOULDER = register(new BoulderTile("boulder"));
-    public static final Tile ROCK = register(new RockTile("rock"));
-    public static final Tile BARREL  = register(new BarrelTile("barrel"));
+    public static final Tile STATUE = register(new BillboardTile("statue", 6.0F).setFootprint(2, 6, 2));
+    public static final Tile BOULDER = register(new BillboardTile("boulder", 2.0F).setFootprint(2, 2, 2));
+    public static final Tile ROCK = register(new BillboardTile("rock", 1.0F).setFootprint(1, 1, 1));
+    public static final Tile BARREL  = register(new BillboardTile("barrel", 2.0F).occupyHeight());
 
     public static final Tile METAL = register(new Tile("metal"));
 
@@ -86,8 +100,28 @@ public final class TileRegistry {
     );
     public static final Tile FRAMED_GLASS = register(new PaneTile("framed_glass"));
     public static final Tile LAMP = register(new Tile("lamp").setLightRadius(12.0F)).setTransparent(true);
+    // 8 cells tall, and one light on the topmost of them: a cone pointing straight down, wider the further it gets.
     public static final Tile LAMPPOST = register(
-            new LamppostTile("lamppost").setLightRadius(10.0F)
+            new BillboardTile("lamppost", 8.0F).occupyHeight()
+                    // measured from the old texture: colour of its glow, centred on the lamp 6.2 blocks up, about 2 blocks wide
+                    .setAura(BillboardAura.of(0.99F, 0.85F, 0.30F)   // the base colour, half way from the rim to the core
+                            .rimColor(0.70F, 0.28F, 0.05F)          // outermost band: dark orange
+                            .coreColor(1.00F, 1.00F, 0.85F)         // innermost band: nearly white
+                            .at(0.0F, 6.2F)
+                            .radius(2.2F)
+                            .strength(1F)
+                            .falloff(1.2F)
+                            .opacity(0.6F)
+                            .bands(7)
+                            .antialias(5.0F)
+                            .grain(0.25F)       // per-pixel wobble of the borders
+                            .blend(BillboardAura.Blend.SCREEN))   // NORMAL, ADD or SCREEN
+
+                    .addLight(LightEmitter.top()
+                            .radius(20.0F)
+                            .cone(0.0F, -1.0F, 0.0F, 40.0F)
+                            .falloff(1.0F)
+                            .softness(0.35F))   // returns Tile, so the lights stay last in the chain
     );
 
     public static final Tile WATER = register(
@@ -186,6 +220,21 @@ public final class TileRegistry {
     // (like the dimensional doors); only the closed one can be placed.
 
     public static final Tile PATH = register(new Tile("path").setPlaceable(false));
+
+    // an entity, not a block: placing it spawns a rigid cube, see CubeTile. last, so no saved id changes
+    public static final Tile WEIGHTED_CUBE = register(new CubeTile());
+
+    // chess pieces, white then black, textures in textures/block/chess. after everything else, the palette is append-only
+    static {
+        for (boolean white : new boolean[]{true, false}) {
+            for (ChessPieceTile.Type type : ChessPieceTile.Type.values()) {
+                register(new ChessPieceTile(type, white));
+            }
+        }
+    }
+
+    // like the weighted cube an entity, not a block: placing it spawns a dice, see DiceTile. last, so no saved id changes
+    public static final Tile DICE = register(new DiceTile());
 
     public static Tile byName(String name) {
         return BY_NAME.get(name);

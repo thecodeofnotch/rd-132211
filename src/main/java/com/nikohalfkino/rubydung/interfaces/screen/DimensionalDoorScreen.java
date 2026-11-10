@@ -16,10 +16,12 @@ import com.nikohalfkino.rubydung.interfaces.widget.PanelSection;
 import com.nikohalfkino.rubydung.interfaces.widget.Widget;
 import com.nikohalfkino.rubydung.level.DoorRegistry;
 import com.nikohalfkino.rubydung.level.Level;
-import com.nikohalfkino.rubydung.level.tiles.DimensionalDoorTile;
-import com.nikohalfkino.rubydung.level.tiles.DoorColor;
+import com.nikohalfkino.rubydung.level.tiles.special.DimensionalDoorTile;
+import com.nikohalfkino.rubydung.level.tiles.special.DoorColor;
 import com.nikohalfkino.rubydung.level.tiles.Tile;
 import com.nikohalfkino.rubydung.level.WorldManager;
+import com.nikohalfkino.rubydung.net.GameClient;
+import com.nikohalfkino.rubydung.net.Multiplayer;
 import com.nikohalfkino.rubydung.render.Font;
 
 import java.util.ArrayList;
@@ -97,6 +99,10 @@ public class DimensionalDoorScreen extends FramePanelScreen implements FramePatt
     // colour being looked for in other worlds (REGULAR = any door)
     private DoorColor filter;
 
+    // a coloured door on a server has no menu: it leads where the server's owner pointed it (see render)
+    private final boolean leadsByServer;
+    private boolean sentThrough = false;
+
     private int selected = -1;
     private int hovered = -1;
     private int scrollRows = 0;
@@ -113,19 +119,31 @@ public class DimensionalDoorScreen extends FramePanelScreen implements FramePatt
         Tile tile = Tile.byId(this.level.getTile(doorX, doorY, doorZ));
         this.doorColor = tile instanceof DimensionalDoorTile ? ((DimensionalDoorTile) tile).getColor() : DoorColor.REGULAR;
         this.filter = this.doorColor;
+        this.leadsByServer = Multiplayer.isClient() && this.doorColor != DoorColor.REGULAR;
 
         onEscape(this.game::closeScreen);
 
-        DimensionalDoorTile.setOpen(this.level, doorX, doorY, doorZ, true);
+        if (!this.leadsByServer) {
+            DimensionalDoorTile.setOpen(this.level, doorX, doorY, doorZ, true);
+        }
 
-        for (WorldManager.WorldInfo world : WorldManager.listWorlds()) {
-            if (!world.name.equals(this.level.getWorldName())) {
-                this.worlds.add(new WorldEntry(world.name, world.lastPlayed, DoorRegistry.colors(world.name)));
+        if (Multiplayer.isClient()) {
+            // on a server the worlds are the server's, with the door colours it last told us about
+            for (GameClient.WorldInfo world : Multiplayer.serverWorlds()) {
+                if (!world.name.equalsIgnoreCase(currentWorldName())) {
+                    this.worlds.add(new WorldEntry(world.name, 0L, world.doors));
+                }
+            }
+        } else {
+            for (WorldManager.WorldInfo world : WorldManager.listWorlds()) {
+                if (!world.name.equals(this.level.getWorldName())) {
+                    this.worlds.add(new WorldEntry(world.name, world.lastPlayed, DoorRegistry.colors(world.name)));
+                }
             }
         }
 
         // The current world's name in the bar under the world view, once the frame has finished opening.
-        this.worldName = add(new Label("Current World: \"" + this.level.getWorldName() + "\"")
+        this.worldName = add(new Label("Current World: \"" + currentWorldName() + "\"")
                 .setColor(0xFFFFFF), Anchor.TOP_LEFT, 0, 0);
         this.worldName.setVisibleWhen(this::isFrameOpen);
 
@@ -134,6 +152,30 @@ public class DimensionalDoorScreen extends FramePanelScreen implements FramePatt
         this.panel.add(new ColorPicker());
 
         addCornerButton("Done", this.game::closeScreen);
+    }
+
+    /**
+     * a coloured door on a server: the screen never shows. the first frame it closes itself and asks the server to take
+     * the player through, the server knows where this door leads (.door). callers that can skip opening the screen
+     * altogether should check Multiplayer.leadsByServer(level, x, y, z) first
+     */
+    @Override
+    public void render(int mouseX, int mouseY) {
+        if (this.leadsByServer) {
+            if (!this.sentThrough) {
+                this.sentThrough = true;
+                this.game.closeScreen();
+                Multiplayer.travelThroughDoor(this.doorX, this.doorY, this.doorZ, "", this.doorColor);
+            }
+            return;
+        }
+        super.render(mouseX, mouseY);
+    }
+
+    /** the name of the world the door is in: the server's name for it when joined, the save's name otherwise */
+    private String currentWorldName() {
+        String served = Multiplayer.serverWorldName();
+        return Multiplayer.isClient() && served != null ? served : this.level.getWorldName();
     }
 
     @Override
@@ -335,6 +377,14 @@ public class DimensionalDoorScreen extends FramePanelScreen implements FramePatt
         int index = worldIndexAt(mouseX, mouseY);
         if (index >= 0 && isEligible(this.worlds.get(index))) {
             this.selected = index;
+            if (Multiplayer.isClient()) {
+                // the server does the travelling: it checks the door, picks where we arrive and sends the other world.
+                // closing first lets the door shut (and that reach the server) before we are moved
+                String target = this.worlds.get(index).name;
+                this.game.closeScreen();
+                Multiplayer.travelThroughDoor(this.doorX, this.doorY, this.doorZ, target, this.filter);
+                return;
+            }
             this.game.travelThroughDoor(this.worlds.get(index).name, this.filter);
             return;
         }

@@ -1,5 +1,6 @@
 package com.nikohalfkino.rubydung.level;
 
+import com.nikohalfkino.rubydung.level.tiles.LightEmitter;
 import com.nikohalfkino.rubydung.level.tiles.Tile;
 import com.nikohalfkino.rubydung.phys.AABB;
 
@@ -32,12 +33,63 @@ class LevelLighting {
         final int x, y, z;
         final float radius;
 
+        // the cell of the tile that gave this light (not always where the light is: an emitter may be offset, or sit on the
+        // top cell of a tall tile), so the light can be found again when that cell changes
+        final int ownerX, ownerY, ownerZ;
+
+        // a cone: unit direction and the cosines of the angles where it is at full strength and where it has faded out
+        final boolean cone;
+        final float dirX, dirY, dirZ;
+        final float cosOuter, cosInner;
+
+        // how the brightness drops with the distance (see LightEmitter.falloff), and its multiplier
+        final float falloff, intensity;
+
         LightSource(int x, int y, int z, float radius) {
+            this(x, y, z, x, y, z, radius, null);
+        }
+
+        LightSource(int x, int y, int z, int ownerX, int ownerY, int ownerZ, float radius, LightEmitter emitter) {
             this.x = x;
             this.y = y;
             this.z = z;
+            this.ownerX = ownerX;
+            this.ownerY = ownerY;
+            this.ownerZ = ownerZ;
             // the scratch arrays are sized for MAX_LIGHT_RADIUS, a bigger radius would run off their end
             this.radius = Math.min(radius, (float) Level.MAX_LIGHT_RADIUS);
+            this.falloff = emitter != null ? emitter.getFalloff() : 2.0F;
+            this.intensity = emitter != null ? emitter.getIntensity() : 1.0F;
+            this.cone = emitter != null && emitter.isCone();
+            this.dirX = this.cone ? emitter.getDirX() : 0.0F;
+            this.dirY = this.cone ? emitter.getDirY() : 0.0F;
+            this.dirZ = this.cone ? emitter.getDirZ() : 0.0F;
+            this.cosOuter = this.cone ? emitter.getCosOuter() : -1.0F;
+            this.cosInner = this.cone ? emitter.getCosInner() : 1.0F;
+        }
+
+        /** how much of its light reaches the cell (dx, dy, dz) away from it: 1 in a ball, along the cone's line 1 and 0 outside of it */
+        float coneFactor(int dx, int dy, int dz, float distance) {
+            if (!this.cone || distance <= 0.0F) {
+                return 1.0F;
+            }
+            float cos = (dx * this.dirX + dy * this.dirY + dz * this.dirZ) / distance;
+            if (cos >= this.cosInner) {
+                return 1.0F;
+            }
+            if (cos <= this.cosOuter) {
+                return 0.0F;
+            }
+            float t = (cos - this.cosOuter) / (this.cosInner - this.cosOuter);
+            return t * t * (3.0F - 2.0F * t);
+        }
+
+        /** the brightness 0..1 at 1 - distance / radius = t, before the cone: t squared unless the emitter asks for another curve */
+        float shape(float t) {
+            if (this.falloff == 2.0F) {
+                return t * t;
+            }
+            return (float) Math.pow(t, this.falloff);
         }
 
         int cubeRadius() {
@@ -323,11 +375,13 @@ class LevelLighting {
                         continue;
                     }
                     Tile tile = Tile.byId(id);
-                    if (tile != null && tile.emitsLight() && !this.level.isMultiTilePart(x, y, z)) {
+                    // every cell of a multi-block is looked at: which of them give light is up to the tile's emitters
+                    // (EVERY_CELL ones in each, TOP ones only in the topmost...)
+                    if (tile != null && tile.emitsLight()) {
                         if (layer == null) {
                             layer = new ArrayList<>();
                         }
-                        layer.add(new LightSource(x, y, z, tile.getLightRadius()));
+                        addSourcesOf(layer, tile, x, y, z);
                     }
                 }
             }
@@ -342,6 +396,48 @@ class LevelLighting {
         for (LightSource source : this.lightSources) {
             spreadLight(source);
         }
+    }
+
+    /** the lights the tile at (x, y, z) gives off from this cell, added to out. read only, so it may run on several threads */
+    private void addSourcesOf(List<LightSource> out, Tile tile, int x, int y, int z) {
+        for (LightEmitter emitter : tile.getLightEmitters()) {
+            switch (emitter.getAnchor()) {
+                case TOP:
+                    // another cell of the same tile above: not the top
+                    if (this.level.getTile(x, y + 1, z) == tile.id) {
+                        continue;
+                    }
+                    break;
+                case BOTTOM:
+                    if (y > 0 && this.level.getTile(x, y - 1, z) == tile.id) {
+                        continue;
+                    }
+                    break;
+                default:
+                    break;
+            }
+
+            int sx = x + emitter.getOffsetX();
+            int sy = y + emitter.getOffsetY();
+            int sz = z + emitter.getOffsetZ();
+            if (sx < 0 || sy < 0 || sz < 0 || sx >= this.level.width || sy >= this.level.depth || sz >= this.level.height) {
+                continue;
+            }
+            out.add(new LightSource(sx, sy, sz, x, y, z, emitter.getRadius(), emitter));
+        }
+    }
+
+    /** takes out (and returns) every light that the tile at (x, y, z) gave */
+    private List<LightSource> removeSourcesOwnedBy(int x, int y, int z) {
+        List<LightSource> removed = new ArrayList<>();
+        for (int i = this.lightSources.size() - 1; i >= 0; i--) {
+            LightSource s = this.lightSources.get(i);
+            if (s.ownerX == x && s.ownerY == y && s.ownerZ == z) {
+                removed.add(s);
+                this.lightSources.remove(i);
+            }
+        }
+        return removed;
     }
 
     private void spreadLight(LightSource source) {
@@ -398,8 +494,11 @@ class LevelLighting {
                     continue;
                 }
 
-                float t     = 1.0F - (float) Math.sqrt(distSq) / radius;
-                int   value = (int) (t * t * 255.0F + 0.5F);
+                float distance = (float) Math.sqrt(distSq);
+                float t     = 1.0F - distance / radius;
+                // a cone's light only lands inside the cone, but the spreading goes on through every cell either way:
+                // the cells outside it are what the light has to travel through to reach the ones inside around a corner
+                int   value = Math.min(255, (int) (source.shape(t) * source.intensity * source.coneFactor(dx, dy, dz, distance) * 255.0F + 0.5F));
                 // The cell is still queued when it is in shadow, so the spreading carries on past it, but it only receives light
                 // if the source can actually see it: otherwise light that wrapped around the end of a wall would be as bright
                 // behind the wall as in front of it, because the brightness only depends on the straight-line distance.
@@ -491,37 +590,48 @@ class LevelLighting {
 
     void updateBlockLight(int x, int y, int z, Tile oldTile, Tile newTile,
                           boolean oldWasPart, boolean newIsPart) {
-        float oldRadius = !oldWasPart && oldTile != null && oldTile.emitsLight()
-                ? oldTile.getLightRadius() : 0.0F;
-        float newRadius = !newIsPart && newTile != null && newTile.emitsLight()
-                ? newTile.getLightRadius() : 0.0F;
+        // the lights this cell gave are replaced by the ones its new tile gives. the cell below is looked at too: whether it
+        // is the top (or only) cell of a tile depends on what is above it, so its TOP and BOTTOM lights may switch on or off
+        List<LightSource> removed = removeSourcesOwnedBy(x, y, z);
+        List<LightSource> added = new ArrayList<>();
+        if (newTile != null && newTile.emitsLight()) {
+            addSourcesOf(added, newTile, x, y, z);
+        }
+
+        if (y > 0) {
+            Tile below = Tile.byId(this.level.getTile(x, y - 1, z));
+            if (below != null && below.emitsLight()) {
+                List<LightSource> was = removeSourcesOwnedBy(x, y - 1, z);
+                List<LightSource> now = new ArrayList<>();
+                addSourcesOf(now, below, x, y - 1, z);
+                removed.addAll(was);
+                added.addAll(now);
+            }
+        }
+        // the cell above for BOTTOM lights
+        if (y + 1 < this.level.depth) {
+            Tile above = Tile.byId(this.level.getTile(x, y + 1, z));
+            if (above != null && above.emitsLight()) {
+                removed.addAll(removeSourcesOwnedBy(x, y + 1, z));
+                addSourcesOf(added, above, x, y + 1, z);
+            }
+        }
+
         boolean opacityChanged =
                 (oldTile != null && oldTile.blocksLight()) != (newTile != null && newTile.blocksLight());
 
-        if (oldRadius > 0.0F) {
-            for (int i = 0; i < this.lightSources.size(); i++) {
-                LightSource s = this.lightSources.get(i);
-                if (s.x == x && s.y == y && s.z == z) {
-                    this.lightSources.remove(i);
-                    break;
-                }
-            }
-        }
-        if (newRadius > 0.0F) {
-            this.lightSources.add(new LightSource(x, y, z, newRadius));
-        }
+        this.lightSources.addAll(added);
 
-        if (oldRadius == 0.0F && newRadius == 0.0F && !opacityChanged) {
+        if (removed.isEmpty() && added.isEmpty() && !opacityChanged) {
             return;
         }
 
-        ArrayList<LightSource> affected = new ArrayList<>();
-        if (oldRadius > 0.0F) {
-            affected.add(new LightSource(x, y, z, oldRadius));
-        }
+        // the lights whose area has to be done again: the ones that were taken out or put in, and every other that reaches this cell
+        ArrayList<LightSource> affected = new ArrayList<>(removed);
+        affected.addAll(added);
         for (LightSource s : this.lightSources) {
             int dx = s.x - x, dy = s.y - y, dz = s.z - z;
-            if (dx * dx + dy * dy + dz * dz < s.radius * s.radius) {
+            if (dx * dx + dy * dy + dz * dz < s.radius * s.radius && !affected.contains(s)) {
                 affected.add(s);
             }
         }

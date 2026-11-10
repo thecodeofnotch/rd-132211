@@ -1,11 +1,30 @@
 package com.nikohalfkino.rubydung.console;
 
-import com.nikohalfkino.rubydung.RubyDung;
+import com.nikohalfkino.rubydung.net.CommandTier;
 
 import java.util.Collections;
 import java.util.List;
 
+/**
+ * a command, the same kind of object on the client and on the server. there is one registry of them (CommandRegistry),
+ * so "help", highlighting and tab completion know every command, and the same code answers wherever it runs.
+ *
+ * nothing in here may mention RubyDung (the game): a dedicated server has no game. a command that needs the game's own
+ * screen or body extends LocalCommand, which is the only kind that is never registered on a server
+ */
 public interface Command {
+
+    /** where a command runs, which is what decides if a line typed in the game is handled here or sent to the server */
+    enum Where {
+        /** this player's own screen, sound and body (clear, fly, freecam...). always runs in their own game, never on a server */
+        LOCAL,
+        /** changes a world the player runs themselves (regenerate): alone or hosting, but not while joined to somebody else's */
+        OWN_WORLD,
+        /** acts on the world through a CommandContext: the server runs it when one is involved (joined or hosting), else the game itself does */
+        WORLD,
+        /** administers a server (kick, ban, say, op...): only a server can run it */
+        SERVER
+    }
 
     String name();
 
@@ -13,6 +32,15 @@ public interface Command {
 
     default List<String> help() {
         return Collections.singletonList(description());
+    }
+
+    /** who may run it, see CommandTier. a command may still keep some of its subcommands for a higher tier (ctx.isOp()) */
+    default CommandTier tier() {
+        return CommandTier.PLAYER;
+    }
+
+    default Where where() {
+        return Where.LOCAL;
     }
 
     /**
@@ -37,5 +65,6 @@ public interface Command {
         return arguments();
     }
 
-    void execute(RubyDung game, Console console, String[] args);
+    /** runs it. the permission (tier) and where it runs have been checked by the registry already */
+    void execute(CommandContext ctx);
 }

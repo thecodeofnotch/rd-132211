@@ -1,9 +1,7 @@
 package com.nikohalfkino.rubydung.render;
 
 import com.nikohalfkino.rubydung.RubyDung;
-import com.nikohalfkino.rubydung.level.LevelRenderer;
 import com.nikohalfkino.rubydung.player.Player;
-import com.nikohalfkino.rubydung.util.GameSettings;
 import org.lwjgl.BufferUtils;
 import org.lwjgl.opengl.GL14;
 import org.lwjgl.opengl.GL30;
@@ -14,213 +12,150 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.text.SimpleDateFormat;
+import java.util.ArrayDeque;
 import java.util.Date;
+import java.util.Queue;
 
 import static org.lwjgl.opengl.GL11.*;
-import static org.lwjgl.util.glu.GLU.gluPerspective;
 
-public class ScreenshotManager {
+/**
+ * screenshots are the world drawn a second time by GameRenderer.renderWorld, into an offscreen framebuffer, from the same camera as the screen (minus the HUD, the frame and the pixelation). there is no pipeline of its own here
+ *
+ * taking one only queues a request. GameRenderer runs the queue in the middle of a frame, right after the world is on screen, so the picture is the frame the player is looking at (the camera pose is the one of that frame) and the GL state is a known one
+ */
+public final class ScreenshotManager {
 
     private static final File SCREENSHOTS_DIR = new File("screenshots");
 
-    // must reach past the skybox (radius 2000) and the sun/moon, same as the in-game far plane
-    private static final float FAR_PLANE = 4096.0F;
+    /** a request: draws what it wants with the renderer and writes the files. live is the player's camera of the current frame */
+    private interface Job {
+        void run(GameRenderer renderer, WorldView live, float partialTicks);
+    }
 
     private final RubyDung game;
-    private final GameRenderer gameRenderer;
+    private final Queue<Job> pending = new ArrayDeque<>();
 
     public ScreenshotManager(RubyDung game, GameRenderer gameRenderer) {
         this.game = game;
-        this.gameRenderer = gameRenderer;
+        gameRenderer.setScreenshotManager(this);
     }
 
-    private interface SceneCamera {
-        void applyProjection(int viewportWidth, int viewportHeight);
+    // ---------------------------------------------------------------- requests
 
-        void applyView();
-
-        float yaw();
-
-        float pitch();
+    /** what the screen shows, scale times as large as the window */
+    public void takeScreenshot(int scale) {
+        if (!this.game.hasWorld()) {
+            return;
+        }
+        this.pending.add((renderer, live, partialTicks) -> {
+            BufferedImage image = capture(renderer, live, this.game.getWidth() * scale, this.game.getHeight() * scale, partialTicks);
+            writeImage(image, newTimestamp(), scaleSuffix(scale));
+        });
     }
 
-    private SceneCamera playerCamera() {
-        Player player = this.game.getPlayer();
-
-        return new SceneCamera() {
-            @Override
-            public void applyProjection(int viewportWidth, int viewportHeight) {
-                gluPerspective(GameSettings.getFov(), viewportWidth / (float) viewportHeight, 0.05F, FAR_PLANE);
-            }
-
-            @Override
-            public void applyView() {
-                CameraUtil.moveCameraToPlayer(player, 1.0F);
-            }
-
-            @Override
-            public float yaw() {
-                return player.yRotation;
-            }
-
-            @Override
-            public float pitch() {
-                return player.xRotation;
-            }
+    /** the six faces of a cube map around the player, each a square */
+    public void takePanoramaScreenshot(int scale) {
+        if (!this.game.hasWorld()) {
+            return;
+        }
+        float[][] faces = {
+                {0.0F, 0.0F}, {90.0F, 0.0F}, {180.0F, 0.0F}, {270.0F, 0.0F}, {0.0F, -90.0F}, {0.0F, 90.0F}
         };
+        this.pending.add((renderer, live, partialTicks) -> {
+            int size = Math.min(this.game.getWidth(), this.game.getHeight()) * scale;
+            Player player = this.game.getPlayer();
+            String timestamp = newTimestamp();
+            for (int i = 0; i < faces.length; i++) {
+                WorldView face = FixedViews.panoramaFace(player, partialTicks, faces[i][0], faces[i][1]);
+                writeImage(capture(renderer, face, size, size, partialTicks), timestamp, "_panorama_" + i + scaleSuffix(scale));
+            }
+        });
     }
 
-    private SceneCamera panoramaFaceCamera(float yaw, float pitch) {
-        Player player = this.game.getPlayer();
-
-        return new SceneCamera() {
-            @Override
-            public void applyProjection(int viewportWidth, int viewportHeight) {
-                gluPerspective(90.0F, 1.0F, 0.05F, FAR_PLANE);
-            }
-
-            @Override
-            public void applyView() {
-                glRotatef(pitch, 1.0F, 0.0F, 0.0F);
-                glRotatef(yaw, 0.0F, 1.0F, 0.0F);
-                glTranslated(-player.x, -player.y, -player.z);
-            }
-
-            @Override
-            public float yaw() {
-                return yaw;
-            }
-
-            @Override
-            public float pitch() {
-                return pitch;
-            }
-        };
+    /** a view from above at an angle, direction is NE, SE, SW or NW */
+    public void takeIsometricScreenshot(String direction, int scale) {
+        if (!this.game.hasWorld()) {
+            return;
+        }
+        this.pending.add((renderer, live, partialTicks) -> {
+            int size = Math.min(this.game.getWidth(), this.game.getHeight()) * scale;
+            WorldView view = FixedViews.isometric(this.game.getPlayer(), partialTicks, FixedViews.isometricYaw(direction));
+            writeImage(capture(renderer, view, size, size, partialTicks), newTimestamp(),
+                    "_isometric_" + direction.toLowerCase() + scaleSuffix(scale));
+        });
     }
 
-    private SceneCamera isometricCamera(float yaw) {
-        Player player = this.game.getPlayer();
-        float viewSize = 40.0F;
-        float pitch = 35.264F;
+    // ---------------------------------------------------------------- called by GameRenderer
 
-        return new SceneCamera() {
-            @Override
-            public void applyProjection(int viewportWidth, int viewportHeight) {
-                glOrtho(-viewSize, viewSize, -viewSize, viewSize, -FAR_PLANE, FAR_PLANE);
-            }
-
-            @Override
-            public void applyView() {
-                glRotatef(pitch, 1.0F, 0.0F, 0.0F);
-                glRotatef(yaw, 0.0F, 1.0F, 0.0F);
-                glTranslated(-player.x, -player.y, -player.z);
-            }
-
-            @Override
-            public float yaw() {
-                return yaw;
-            }
-
-            @Override
-            public float pitch() {
-                return pitch;
-            }
-        };
+    boolean hasPending() {
+        return !this.pending.isEmpty();
     }
 
-    private float isometricYaw(String direction) {
-        switch (direction) {
-            case "NE":
-                return 45.0F;
-            case "SE":
-                return 135.0F;
-            case "SW":
-                return 225.0F;
-            case "NW":
-            default:
-                return 315.0F;
+    /** runs the requests, the world of this frame is drawn and the HUD is not yet */
+    void processPending(GameRenderer renderer, WorldView live, float partialTicks) {
+        Job job;
+        while ((job = this.pending.poll()) != null) {
+            try {
+                job.run(renderer, live, partialTicks);
+            } catch (RuntimeException e) {
+                System.out.println("Screenshot failed: " + e);
+            }
         }
     }
 
-    private BufferedImage captureView(int viewportWidth, int viewportHeight, SceneCamera camera) {
+    // ---------------------------------------------------------------- capturing
+
+    private BufferedImage capture(GameRenderer renderer, WorldView view, int width, int height, float partialTicks) {
         int fbo = GL30.glGenFramebuffers();
         int colorTexture = glGenTextures();
         int depthRenderbuffer = GL30.glGenRenderbuffers();
+
+        // the frame is not over: everything the world pass touches (viewport, scissor, matrices, fog, texture binding) is given back as it was
+        int previousFramebuffer = glGetInteger(GL30.GL_FRAMEBUFFER_BINDING);
+        glPushAttrib(GL_ALL_ATTRIB_BITS);
+        glMatrixMode(GL_PROJECTION);
+        glPushMatrix();
+        glMatrixMode(GL_MODELVIEW);
+        glPushMatrix();
 
         try {
             glDisable(GL_SCISSOR_TEST); // the frame's clip to the game area must not cut the offscreen image
             GL30.glBindFramebuffer(GL30.GL_FRAMEBUFFER, fbo);
 
             glBindTexture(GL_TEXTURE_2D, colorTexture);
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, viewportWidth, viewportHeight, 0,
-                    GL_RGBA, GL_UNSIGNED_BYTE, (ByteBuffer) null);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, (ByteBuffer) null);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-            GL30.glFramebufferTexture2D(GL30.GL_FRAMEBUFFER, GL30.GL_COLOR_ATTACHMENT0,
-                    GL_TEXTURE_2D, colorTexture, 0);
+            GL30.glFramebufferTexture2D(GL30.GL_FRAMEBUFFER, GL30.GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, colorTexture, 0);
 
             GL30.glBindRenderbuffer(GL30.GL_RENDERBUFFER, depthRenderbuffer);
-            GL30.glRenderbufferStorage(GL30.GL_RENDERBUFFER, GL14.GL_DEPTH_COMPONENT24,
-                    viewportWidth, viewportHeight);
-            GL30.glFramebufferRenderbuffer(GL30.GL_FRAMEBUFFER, GL30.GL_DEPTH_ATTACHMENT,
-                    GL30.GL_RENDERBUFFER, depthRenderbuffer);
+            GL30.glRenderbufferStorage(GL30.GL_RENDERBUFFER, GL14.GL_DEPTH_COMPONENT24, width, height);
+            GL30.glFramebufferRenderbuffer(GL30.GL_FRAMEBUFFER, GL30.GL_DEPTH_ATTACHMENT, GL30.GL_RENDERBUFFER, depthRenderbuffer);
 
             int status = GL30.glCheckFramebufferStatus(GL30.GL_FRAMEBUFFER);
             if (status != GL30.GL_FRAMEBUFFER_COMPLETE) {
                 System.out.println("Screenshot framebuffer incomplete (status " + status + "), image may be blank.");
             }
 
-            glViewport(0, 0, viewportWidth, viewportHeight);
+            glViewport(0, 0, width, height);
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-            glMatrixMode(GL_PROJECTION);
-            glLoadIdentity();
-            camera.applyProjection(viewportWidth, viewportHeight);
-
-            glMatrixMode(GL_MODELVIEW);
-            glLoadIdentity();
-            camera.applyView();
-
-            LevelRenderer levelRenderer = this.game.getLevelRenderer();
-            Player player = this.game.getPlayer();
-
-            double eyeX = player.prevX + (player.x - player.prevX) * 1.0F;
-            double eyeY = player.prevY + (player.y - player.prevY) * 1.0F;
-            double eyeZ = player.prevZ + (player.z - player.prevZ) * 1.0F;
-
-            this.gameRenderer.getSkyboxRenderer().render(eyeX, eyeY, eyeZ, this.game.getDayNightCycle());
-            // The sun and moon are drawn between the white (lower) and coloured (upper) cloud layers.
-            this.gameRenderer.getCloudRenderer().render(eyeX, eyeY, eyeZ, this.game.getDayNightCycle(),
-                    () -> this.gameRenderer.getSkyboxRenderer().renderSunAndMoon(eyeX, eyeY, eyeZ, this.game.getDayNightCycle()));
-
-            glEnable(GL_FOG);
-            glFogi(GL_FOG_MODE, GL_LINEAR);
-            glFogf(GL_FOG_START, this.gameRenderer.getFogStart());
-            glFogf(GL_FOG_END, this.gameRenderer.getFogEnd());
-            glFog(GL_FOG_COLOR, this.gameRenderer.getFogColor());
-            glDisable(GL_FOG);
-
-            levelRenderer.render(0);
-
-            glEnable(GL_FOG);
-            levelRenderer.render(1);
-
-            levelRenderer.renderLiquids();
-
-            levelRenderer.renderBillboards(camera.yaw(), camera.pitch());
-
-            glDisable(GL_TEXTURE_2D);
-            glDisable(GL_FOG);
+            // no highlights, no debug overlays and not "live": the players' smoothing and name tags must not be stepped a second time
+            renderer.renderWorld(view, width, height, partialTicks, false, false);
 
             glReadBuffer(GL30.GL_COLOR_ATTACHMENT0);
-            return readPixels(viewportWidth, viewportHeight);
+            return readPixels(width, height);
         } finally {
-            GL30.glBindFramebuffer(GL30.GL_FRAMEBUFFER, 0);
-            this.game.getWindowManager().viewport(0, 0, this.game.getWidth(), this.game.getHeight());
-
+            GL30.glBindFramebuffer(GL30.GL_FRAMEBUFFER, previousFramebuffer);
             GL30.glDeleteFramebuffers(fbo);
             glDeleteTextures(colorTexture);
             GL30.glDeleteRenderbuffers(depthRenderbuffer);
+
+            glMatrixMode(GL_PROJECTION);
+            glPopMatrix();
+            glMatrixMode(GL_MODELVIEW);
+            glPopMatrix();
+            glPopAttrib();
         }
     }
 
@@ -228,27 +163,35 @@ public class ScreenshotManager {
         ByteBuffer buffer = BufferUtils.createByteBuffer(width * height * 4);
         glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, buffer);
 
-        BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
+        // OpenGL's first row is the bottom one
+        int[] argb = new int[width * height];
         for (int y = 0; y < height; y++) {
+            int sourceRow = height - 1 - y;
             for (int x = 0; x < width; x++) {
-                int i = (x + (height - y - 1) * width) * 4;
+                int i = (sourceRow * width + x) * 4;
                 int r = buffer.get(i) & 0xFF;
                 int g = buffer.get(i + 1) & 0xFF;
                 int b = buffer.get(i + 2) & 0xFF;
-
-                int a = 255;
-
-                image.setRGB(x, y, (a << 24) | (r << 16) | (g << 8) | b);
+                argb[y * width + x] = 0xFF000000 | (r << 16) | (g << 8) | b;
             }
         }
+
+        BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
+        image.setRGB(0, 0, width, height, argb, 0, width);
         return image;
     }
 
-    private String newScreenshotTimestamp() {
+    // ---------------------------------------------------------------- output
+
+    private static String scaleSuffix(int scale) {
+        return scale > 1 ? "_" + scale + "x" : "";
+    }
+
+    private static String newTimestamp() {
         return new SimpleDateFormat("yyyy-MM-dd_HH.mm.ss").format(new Date());
     }
 
-    private void writeImage(BufferedImage image, String timestamp, String suffix) {
+    private static void writeImage(BufferedImage image, String timestamp, String suffix) {
         SCREENSHOTS_DIR.mkdirs();
 
         File file = new File(SCREENSHOTS_DIR, timestamp + suffix + ".png");
@@ -262,43 +205,5 @@ public class ScreenshotManager {
 
         com.nikohalfkino.rubydung.util.ImageTransferable.copyToClipboard(image);
         System.out.println("Copied screenshot to clipboard.");
-    }
-
-    public void takeScreenshot(int scale) {
-        if (!this.game.hasWorld()) {
-            return;
-        }
-
-        BufferedImage image = captureView(this.game.getWidth() * scale, this.game.getHeight() * scale, playerCamera());
-        writeImage(image, newScreenshotTimestamp(), scale > 1 ? "_" + scale + "x" : "");
-    }
-
-    public void takePanoramaScreenshot(int scale) {
-        if (!this.game.hasWorld()) {
-            return;
-        }
-
-        int size = Math.min(this.game.getWidth(), this.game.getHeight()) * scale;
-        float[][] faces = {
-                {0.0F, 0.0F}, {90.0F, 0.0F}, {180.0F, 0.0F}, {270.0F, 0.0F}, {0.0F, -90.0F}, {0.0F, 90.0F}
-        };
-
-        String timestamp = newScreenshotTimestamp();
-        for (int i = 0; i < faces.length; i++) {
-            BufferedImage image = captureView(size, size, panoramaFaceCamera(faces[i][0], faces[i][1]));
-            writeImage(image, timestamp, "_panorama_" + i + (scale > 1 ? "_" + scale + "x" : ""));
-        }
-    }
-
-    public void takeIsometricScreenshot(String direction, int scale) {
-        if (!this.game.hasWorld()) {
-            return;
-        }
-
-        int size = Math.min(this.game.getWidth(), this.game.getHeight()) * scale;
-        float yaw = isometricYaw(direction);
-
-        BufferedImage image = captureView(size, size, isometricCamera(yaw));
-        writeImage(image, newScreenshotTimestamp(), "_isometric_" + direction.toLowerCase() + (scale > 1 ? "_" + scale + "x" : ""));
     }
 }

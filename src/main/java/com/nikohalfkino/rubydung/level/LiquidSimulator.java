@@ -1,6 +1,6 @@
 package com.nikohalfkino.rubydung.level;
 
-import com.nikohalfkino.rubydung.level.tiles.LiquidTile;
+import com.nikohalfkino.rubydung.level.tiles.special.LiquidTile;
 
 import java.util.BitSet;
 

@@ -1,10 +1,12 @@
 package com.nikohalfkino.rubydung.level;
 
-import com.nikohalfkino.rubydung.level.tiles.DimensionalDoorTile;
-import com.nikohalfkino.rubydung.level.tiles.LiquidTile;
+import com.nikohalfkino.rubydung.level.tiles.special.ChessPieceTile;
+import com.nikohalfkino.rubydung.level.tiles.special.DimensionalDoorTile;
+import com.nikohalfkino.rubydung.level.tiles.special.LiquidTile;
 import com.nikohalfkino.rubydung.level.tiles.Tile;
 import com.nikohalfkino.rubydung.level.generation.LevelGenerator;
 import com.nikohalfkino.rubydung.level.generation.WorldGenStatus;
+import com.nikohalfkino.rubydung.entity.CubeManager;
 import com.nikohalfkino.rubydung.phys.AABB;
 import com.nikohalfkino.rubydung.util.SaveQueue;
 
@@ -75,6 +77,9 @@ public class Level {
 
     // the liquid of every cell, separate from the block array so a block can share a cell with it
     private final LiquidLayer liquids;
+
+    // the weighted cubes: free-standing bodies, saved next to the level (see cubeFile)
+    private final CubeManager cubes = new CubeManager(this);
 
     public boolean hasSavedPosition = false;
     public double savedPlayerX, savedPlayerY, savedPlayerZ;
@@ -294,10 +299,16 @@ public class Level {
         if (hasSave) {
             this.subTiles.restore(WorldManager.loadWorldSubTiles(this.worldName));
             this.liquids.load(liquidFile());
+            this.cubes.load(cubeFile());
         }
 
         this.lighting.calcLightDepths(0, 0, this.width, this.height);
         this.lighting.rebuildBlockLight();
+
+        if (hasSave) {
+            // chess pieces were tiles once, now they are entities
+            this.cubes.convertChessTiles();
+        }
 
         if (position.hasSeed) {
             this.seed = position.seed;
@@ -429,6 +440,10 @@ public class Level {
             // the liquid layer was copied slice by slice alongside the blocks; its gzip write runs on the save thread
             Runnable saveLiquids = this.liquids.finishSnapshot(liquidFile());
 
+            // the cubes are few: their bytes are taken here, on the game thread, the write runs on the save thread
+            File cubesFile = cubeFile();
+            Runnable saveCubes = deferred(this.cubes.snapshot(), bytes -> CubeManager.writeFile(cubesFile, bytes));
+
             SaveQueue.submit(() -> {
                 try {
                     byte[] encodedBlocks = savePalette.encode(blocksCopy);
@@ -438,6 +453,7 @@ public class Level {
                     WorldManager.saveWorldType(name, saveType);
                     saveDoors.run();
                     saveLiquids.run();
+                    saveCubes.run();
                     LevelIO.save(file, encodedBlocks, dataCopy, position);
                 } finally {
                     this.asyncSaveRunning.set(false);
@@ -463,6 +479,7 @@ public class Level {
         WorldManager.saveWorldMultiTiles(this.worldName, collectMultiTileOrigins());
         WorldManager.saveWorldSubTiles(this.worldName, this.subTiles.snapshot());
         this.liquids.save(liquidFile());
+        this.cubes.save(cubeFile());
         WorldManager.saveWorldType(this.worldName, this.type);
         DoorRegistry.save(this.worldName, getDoors());
         return encodedBlocks;
@@ -579,6 +596,14 @@ public class Level {
         return new File(WorldManager.levelFile(this.worldName).getPath() + ".liquids");
     }
 
+    private File cubeFile() {
+        return new File(WorldManager.levelFile(this.worldName).getPath() + ".cubes");
+    }
+
+    public CubeManager getCubeManager() {
+        return this.cubes;
+    }
+
     // a liquid was added, removed or swapped. only the chunk mesh needs to know: liquids neither block
     // light nor shade the cells under them
     void liquidChanged(int x, int y, int z, LiquidTile oldLiquid, LiquidTile newLiquid) {
@@ -641,7 +666,15 @@ public class Level {
         return false;
     }
 
+    /** everything the player can bump into near the box: the blocks and the weighted cubes (a cube carried in the hands is not one) */
     public ArrayList<AABB> getCubes(AABB boundingBox) {
+        ArrayList<AABB> boundingBoxList = getWorldCubes(boundingBox);
+        this.cubes.addCollisionBoxes(boundingBox, boundingBoxList);
+        return boundingBoxList;
+    }
+
+    /** the collision boxes of the blocks alone, what a weighted cube collides with */
+    public ArrayList<AABB> getWorldCubes(AABB boundingBox) {
         ArrayList<AABB> boundingBoxList = new ArrayList<>();
 
         int minX = Math.max(0, (int) (Math.floor(boundingBox.minX) - 1));
@@ -676,6 +709,12 @@ public class Level {
             return;
         }
 
+        // a chess piece is never stored: placing one stands an entity on the square. a joined client only asks the server (it hears of the piece with the others)
+        if (Tile.byId(id & 0xFF) instanceof ChessPieceTile) {
+            placeChessPiece(x, y, z, id & 0xFF, data);
+            return;
+        }
+
         boolean liquid = setTileUnchecked(x, y, z, id, data);
 
         if (this.editListener != null && this.networkApplyDepth == 0) {
@@ -685,6 +724,20 @@ public class Level {
                 this.editListener.tileEdited(x, y, z, getTile(x, y, z), getData(x, y, z));
             }
         }
+    }
+
+    private void placeChessPiece(int x, int y, int z, int id, int data) {
+        if (this.networkApplyDepth > 0) {
+            return;
+        }
+        if (this.cubes.isReplica()) {
+            if (this.editListener != null) {
+                this.editListener.tileEdited(x, y, z, id, data);
+            }
+            return;
+        }
+        ChessPieceTile piece = (ChessPieceTile) Tile.byId(id);
+        this.cubes.spawnPiece(x, y, z, piece.getType(), piece.isWhite(), (data & ChessPieceTile.DATA_MOVED) != 0);
     }
 
     /** the work of setTile, true if the tile was a liquid (it went to the liquid layer) */

@@ -1,7 +1,7 @@
 package com.nikohalfkino.rubydung.player;
 
 import com.nikohalfkino.rubydung.level.Level;
-import com.nikohalfkino.rubydung.level.tiles.LiquidTile;
+import com.nikohalfkino.rubydung.level.tiles.special.LiquidTile;
 import com.nikohalfkino.rubydung.phys.AABB;
 
 import java.util.List;
@@ -28,7 +28,6 @@ import java.util.List;
  *   - the world is axis aligned boxes, so trace normals are always axis aligned (no slopes)
  *   - the dropoff test in friction is a point trace (like Quake 1's SV_Friction, which is what the
  *     code means to do)
- *   - flying and noclip are the game's old creative flight, not SpectatorMove
  *   - in mid air a whole block can be stepped up when running into it (airStep), so bunnyhops don't get stuck
  *   - walking speed is scaled by SPEED_SCALE and holding jump keeps jumping (AUTO_JUMP)
  *   - the water code reads the liquid layer: water level / type come from LiquidTile, and viscosity

@@ -1,16 +1,20 @@
 package com.nikohalfkino.rubydung.console.commands;
 
-import com.nikohalfkino.rubydung.level.DayNightCycle;
-import com.nikohalfkino.rubydung.RubyDung;
 import com.nikohalfkino.rubydung.console.Command;
 import com.nikohalfkino.rubydung.console.CommandArg;
-import com.nikohalfkino.rubydung.console.Console;
+import com.nikohalfkino.rubydung.console.CommandContext;
+import com.nikohalfkino.rubydung.level.DayNightCycle;
 
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.Locale;
 
+/** the day-night cycle. anybody may look at it, changing it is for ops (on your own, you are one) */
 public class TimeCommand implements Command {
+
+    /** the fastest the clock may run, so one command can't make a server's day a blur */
+    private static final float MAX_SPEED = 100.0F;
 
     @Override
     public String name() {
@@ -19,35 +23,43 @@ public class TimeCommand implements Command {
 
     @Override
     public String description() {
-        return "Controls the day-night cycle";
+        return "Shows the time of day. Changing it needs op";
+    }
+
+    @Override
+    public Where where() {
+        return Where.WORLD;
     }
 
     @Override
     public List<String> help() {
         return Arrays.asList(
-                "Usage: time <set|speed|freeze|unfreeze|query>",
-                "  time set <dawn|noon|dusk|midnight|0.0-1.0>  - jump to a time",
-                "  time speed <multiplier>                     - e.g. 2 = 2x faster, 0 = freeze",
-                "  time freeze / unfreeze                      - stop / resume the cycle",
-                "  time query                                  - print current time & speed");
+                "Usage: time [query | set <time> | speed <multiplier> | freeze | unfreeze]",
+                "  time [query]                                - print the current time & speed",
+                "  time set <dawn|noon|dusk|midnight|0.0-1.0>  - jump to a time (ops)",
+                "  time speed <multiplier>                     - e.g. 2 = 2x faster, 0 = freeze (ops, at most " + (int) MAX_SPEED + ")",
+                "  time freeze / unfreeze                      - stop / resume the cycle (ops)",
+                "  sunrise and sunset also work for dawn and dusk, day and night for noon and midnight");
     }
 
     @Override
     public List<CommandArg> arguments(String[] given) {
-        CommandArg action = CommandArg.choice("action", "set", "speed", "freeze", "unfreeze", "query")
+        CommandArg action = CommandArg.choice("action", "query", "set", "speed", "freeze", "unfreeze")
+                .optional()
+                .note("query", "print the current time and speed")
                 .note("set", "jump to a time")
                 .note("speed", "change how fast time passes")
                 .note("freeze", "stop the cycle")
-                .note("unfreeze", "resume the cycle")
-                .note("query", "print the current time and speed");
+                .note("unfreeze", "resume the cycle");
 
         if (given.length == 0) {
             return Collections.singletonList(action);
         }
 
-        switch (given[0].toLowerCase()) {
+        switch (given[0].toLowerCase(Locale.ROOT)) {
             case "set":
-                return Arrays.asList(action, CommandArg.choice("time", "dawn", "noon", "dusk", "midnight")
+                return Arrays.asList(action, CommandArg.choice("time", "dawn", "noon", "dusk", "midnight",
+                                "sunrise", "sunset", "day", "night")
                         .orNumber()
                         .note("dawn", "0.25")
                         .note("noon", "0.5")
@@ -61,92 +73,92 @@ public class TimeCommand implements Command {
     }
 
     @Override
-    public void execute(RubyDung game, Console console, String[] args) {
-        if (args.length == 0) {
-            printUsage(console);
+    public void execute(CommandContext ctx) {
+        if (!ctx.hasWorld()) {
+            ctx.say("No world loaded");
             return;
         }
 
-        DayNightCycle cycle = game.getDayNightCycle();
-        String sub = args[0].toLowerCase();
+        DayNightCycle cycle = ctx.clock();
+        String sub = ctx.arg(0) == null ? "query" : ctx.arg(0).toLowerCase(Locale.ROOT);
+
+        if (!sub.equals("query") && !ctx.isOp()) {
+            ctx.say("Only ops can change the time");
+            return;
+        }
 
         switch (sub) {
+            case "query": {
+                float t = cycle.getTime();
+                ctx.say("Time: " + String.format(Locale.ROOT, "%.4f", t)
+                        + " (" + phaseName(t) + ")"
+                        + " | speed: " + cycle.getSpeed() + "x"
+                        + (cycle.isFrozen() ? " [FROZEN]" : ""));
+                return;
+            }
 
             case "set": {
-                // time set <dawn|noon|dusk|midnight|0.0–1.0>
-                if (args.length < 2) {
-                    console.println("Usage: time set <dawn|noon|dusk|midnight|0.0-1.0>");
-                    return;
-                }
-                float t = parseTimeValue(args[1]);
+                float t = ctx.arg(1) == null ? Float.NaN : parseTimeValue(ctx.arg(1));
                 if (Float.isNaN(t)) {
-                    console.println("Unknown time value '" + args[1] + "'. Use dawn, noon, dusk, midnight, or a number 0.0-1.0");
+                    ctx.say("Usage: time set <dawn|noon|dusk|midnight|0.0-1.0>");
                     return;
                 }
                 cycle.setTime(t);
-                console.println("Time set to " + args[1] + " (" + String.format("%.3f", t) + ")");
+                ctx.say("Time set to " + ctx.arg(1) + " (" + String.format(Locale.ROOT, "%.3f", t) + ")");
                 break;
             }
 
             case "speed": {
-                // time speed <multiplier>   (1.0 = normal, 0 = paused, 10 = 10× faster)
-                if (args.length < 2) {
-                    console.println("Usage: time speed <multiplier>  (1.0 = normal, 0 = frozen)");
+                float speed;
+                try {
+                    speed = Float.parseFloat(ctx.arg(1));
+                } catch (RuntimeException e) {
+                    ctx.say("Usage: time speed <0-" + (int) MAX_SPEED + ">");
                     return;
                 }
-                try {
-                    float speed = Float.parseFloat(args[1]);
-                    if (speed < 0) {
-                        console.println("Speed must be >= 0");
-                        return;
-                    }
-                    cycle.setSpeed(speed);
-                    if (speed == 0) {
-                        console.println("Time frozen (speed 0)");
-                    } else {
-                        console.println("Time speed set to " + speed + "x");
-                    }
-                } catch (NumberFormatException e) {
-                    console.println("Speed must be a number");
+                if (Float.isNaN(speed) || speed < 0.0F || speed > MAX_SPEED) {
+                    ctx.say("Speed must be between 0 and " + (int) MAX_SPEED);
+                    return;
                 }
+                cycle.setSpeed(speed);
+                ctx.say(speed == 0.0F ? "Time frozen (speed 0)" : "Time speed set to " + speed + "x");
                 break;
             }
 
-            case "freeze": {
+            case "freeze":
                 cycle.setFrozen(true);
-                console.println("Time frozen at " + String.format("%.3f", cycle.getTime())
+                ctx.say("Time frozen at " + String.format(Locale.ROOT, "%.3f", cycle.getTime())
                         + " (" + phaseName(cycle.getTime()) + ")");
                 break;
-            }
 
-            case "unfreeze": {
+            case "unfreeze":
                 cycle.setFrozen(false);
-                console.println("Time unfrozen");
+                ctx.say("Time unfrozen");
                 break;
-            }
-
-            case "query": {
-                float t = cycle.getTime();
-                console.println("Time: " + String.format("%.4f", t)
-                        + " (" + phaseName(t) + ")"
-                        + " | speed: " + cycle.getSpeed() + "x"
-                        + (cycle.isFrozen() ? " [FROZEN]" : ""));
-                break;
-            }
 
             default:
-                printUsage(console);
+                ctx.say("Usage: time [query | set <time> | speed <n> | freeze | unfreeze]  (type 'time help' for details)");
+                return;
         }
+
+        // the players of the world get the new time at once (nothing happens in a game on its own)
+        ctx.clockChanged();
     }
 
-    // helpers
-
     private static float parseTimeValue(String s) {
-        switch (s.toLowerCase()) {
-            case "midnight": return 0.0F;
-            case "dawn":     return 0.25F;
-            case "noon":     return 0.5F;
-            case "dusk":     return 0.75F;
+        switch (s.toLowerCase(Locale.ROOT)) {
+            case "midnight":
+            case "night":
+                return 0.0F;
+            case "dawn":
+            case "sunrise":
+                return 0.25F;
+            case "noon":
+            case "day":
+                return 0.5F;
+            case "dusk":
+            case "sunset":
+                return 0.75F;
             default:
                 try {
                     float v = Float.parseFloat(s);
@@ -162,9 +174,5 @@ public class TimeCommand implements Command {
         if (t < 0.375F)                return "dawn";
         if (t < 0.625F)                return "day";
         return "dusk";
-    }
-
-    private static void printUsage(Console console) {
-        console.println("Usage: time <set|speed|freeze|unfreeze|query>  (type 'time help' for details)");
     }
 }

@@ -165,6 +165,11 @@ public final class JTalkSettings {
 
     // bounds
 
+    // how loud the voices are, for the local player's and everybody else's (on top of the sound effects volume)
+    public static final float MIN_VOLUME = 0.0f;
+    public static final float MAX_VOLUME = 1.0f;
+    public static final float DEF_VOLUME = 1.0f;
+
     public static final float MIN_SPEED  = 0.3f;
     public static final float MAX_SPEED  = 3.0f;
     public static final float DEF_SPEED  = 1.0f;
@@ -206,6 +211,7 @@ public final class JTalkSettings {
 
     private static volatile String  voicePath = DEF_VOICE;
 
+    private static volatile float   volume    = DEF_VOLUME;
     private static volatile float   speed     = DEF_SPEED;
     private static volatile float   pitch     = DEF_PITCH;
     private static volatile float   alpha     = DEF_ALPHA;
@@ -236,6 +242,9 @@ public final class JTalkSettings {
     public static String  getVoicePath()           { return voicePath; }
     public static void    setVoicePath(String v)   { voicePath = notBlank(v) ? v.strip() : DEF_VOICE; }
 
+    public static float   getVolume()              { return volume; }
+    public static void    setVolume(float v)       { volume = clamp(v, MIN_VOLUME, MAX_VOLUME); }
+
     public static float   getSpeed()               { return speed; }
     public static void    setSpeed(float v)        { speed  = clamp(v, MIN_SPEED,  MAX_SPEED);  }
 
@@ -259,6 +268,7 @@ public final class JTalkSettings {
 
     // resets (for the reset buttons next to the sliders)
 
+    public static void resetVolume()   { volume   = DEF_VOLUME; }
     public static void resetSpeed()    { speed    = DEF_SPEED;  }
     public static void resetPitch()    { pitch    = DEF_PITCH;  }
     public static void resetAlpha()    { alpha    = DEF_ALPHA;  }
@@ -300,6 +310,7 @@ public final class JTalkSettings {
             setVoicePath(v);
         }
 
+        volume   = clamp(parseFloat(p.getProperty("volume"),   volume),   MIN_VOLUME, MAX_VOLUME);
         speed    = clamp(parseFloat(p.getProperty("speed"),    speed),    MIN_SPEED,  MAX_SPEED);
         pitch    = clamp(parseFloat(p.getProperty("pitch"),    pitch),    MIN_PITCH,  MAX_PITCH);
         alpha    = clamp(parseFloat(p.getProperty("alpha"),    alpha),    MIN_ALPHA,  MAX_ALPHA);
@@ -316,6 +327,7 @@ public final class JTalkSettings {
         p.setProperty("execPath",  execPath.equals(DEF_EXEC)   ? "" : execPath);
         p.setProperty("dicPath",   dicPath.equals(DEF_DIC)     ? "" : dicPath);
         p.setProperty("voicePath", voiceForSave());
+        p.setProperty("volume",    Float.toString(volume));
         p.setProperty("speed",     Float.toString(speed));
         p.setProperty("pitch",     Float.toString(pitch));
         p.setProperty("alpha",     Float.toString(alpha));
@@ -341,6 +353,23 @@ public final class JTalkSettings {
     }
 
     // helpers
+
+    /** file name of the current voice without .htsvoice, "" if there is none: what is sent to the other players */
+    public static String getVoiceName() {
+        String path = voicePath;
+        return path == null || path.isEmpty() ? "" : stem(new File(path));
+    }
+
+    /** absolute path of the bundled voice of that name (with or without .htsvoice), null if none matches */
+    public static String findVoicePath(String name) {
+        if (!notBlank(name)) return null;
+        String want = name.strip().toLowerCase(Locale.ROOT);
+        if (want.endsWith(".htsvoice")) want = want.substring(0, want.length() - ".htsvoice".length());
+        for (File f : listVoices()) {
+            if (stem(f).equals(want)) return f.getAbsolutePath();
+        }
+        return null;
+    }
 
     private static boolean notBlank(String s) { return s != null && !s.isBlank(); }
 

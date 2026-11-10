@@ -1,7 +1,7 @@
 package com.nikohalfkino.rubydung.console.commands;
 
 import com.nikohalfkino.rubydung.RubyDung;
-import com.nikohalfkino.rubydung.console.Command;
+import com.nikohalfkino.rubydung.console.LocalCommand;
 import com.nikohalfkino.rubydung.console.CommandArg;
 import com.nikohalfkino.rubydung.console.Console;
 import com.nikohalfkino.rubydung.player.PlayerPhysics;
@@ -12,7 +12,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
 
-public class VectorsCommand implements Command {
+public class VectorsCommand extends LocalCommand {
 
     @Override
     public String name() {

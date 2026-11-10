@@ -30,8 +30,8 @@ public class ChatHud extends Widget {
     private static final int PAD = 4;
     private static final int MARGIN = 10;
 
-    // sits above SelectedTileHud (ROW_HEIGHT 48 + its 10px margin), which owns the very bottom-left corner
-    private static final int ABOVE_SELECTED_TILE = 48 + MARGIN + 6;
+    // gap between the top of SelectedTileHud (which owns the very bottom-left corner) and the bottom of the chat
+    private static final int GAP_ABOVE_SELECTED_TILE = 6;
 
     private static final int MAX_VISUAL_LINES = 8;
     private static final float MAX_WIDTH_FRACTION = 0.45F;
@@ -79,7 +79,17 @@ public class ChatHud extends Widget {
 
     public ChatHud(RubyDung game) {
         this.game = game;
-        setAnchor(Anchor.BOTTOM_LEFT, MARGIN, -ABOVE_SELECTED_TILE);
+        setAnchor(Anchor.BOTTOM_LEFT, MARGIN, -aboveSelectedTile());
+    }
+
+    /**
+     * how far up from the window's bottom edge the chat has to sit. SelectedTileHud is 78px tall, or 102px when the
+     * selected tile has a "Type:" line (trees, doors, wood...), so this is worked out from the real height every frame
+     * and not a fixed number, which is what used to make the two overlap
+     */
+    private float aboveSelectedTile() {
+        float selectedHeight = SelectedTileHud.heightFor(this.game.getSelectedTile());
+        return SelectedTileHud.EDGE_MARGIN + selectedHeight + GAP_ABOVE_SELECTED_TILE;
     }
 
     private boolean isSuppressed() {
@@ -92,6 +102,9 @@ public class ChatHud extends Widget {
         this.lines.clear();
         this.width = 0.0F;
         this.height = 0.0F;
+
+        // the offset is applied after measure() in the arrange pass, so this is what places the chat this frame
+        setOffset(MARGIN, -aboveSelectedTile());
 
         List<ChatLog.Line> all = this.game.getChatLog().getLines();
         boolean suppressed = isSuppressed();

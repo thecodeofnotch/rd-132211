@@ -1,9 +1,11 @@
 package com.nikohalfkino.rubydung.console.commands;
 
-import com.nikohalfkino.rubydung.RubyDung;
 import com.nikohalfkino.rubydung.console.Command;
-import com.nikohalfkino.rubydung.console.Console;
+import com.nikohalfkino.rubydung.console.CommandArg;
+import com.nikohalfkino.rubydung.console.CommandContext;
+import com.nikohalfkino.rubydung.net.CommandTier;
 
+import java.util.Collections;
 import java.util.List;
 
 public class HelpCommand implements Command {
@@ -15,34 +17,41 @@ public class HelpCommand implements Command {
 
     @Override
     public String description() {
-        return "Lists commands, or shows help for one: help [command]";
+        return "Lists the commands you may use, or shows help for one: help [command]";
     }
 
     @Override
-    public void execute(RubyDung game, Console console, String[] args) {
-        if (args.length > 0) {
-            Command command = console.find(args[0]);
+    public List<CommandArg> arguments() {
+        return Collections.singletonList(CommandArg.word("command").optional());
+    }
+
+    @Override
+    public void execute(CommandContext ctx) {
+        if (ctx.args().length > 0) {
+            Command command = ctx.registry().find(ctx.arg(0));
             if (command == null) {
-                console.println("Unknown command: " + args[0]);
+                ctx.say("Unknown command: " + ctx.arg(0));
                 return;
             }
             for (String line : command.help()) {
-                console.println(line);
+                ctx.say(line);
             }
             return;
         }
 
-        List<Command> commands = console.commands();
+        // only what this player may run: an op sees more than a player, and on a server the tier is the server's
+        List<Command> commands = ctx.registry().visibleTo(ctx.tier());
 
         int maxNameLength = 0;
         for (Command command : commands) {
             maxNameLength = Math.max(maxNameLength, command.name().length());
         }
 
-        String formatSpecifier = "%-" + maxNameLength + "s - %s";
+        String formatSpecifier = "%-" + maxNameLength + "s - %s%s";
         for (Command command : commands) {
-            console.println(String.format(formatSpecifier, command.name(), command.description()));
+            String tag = command.tier() == CommandTier.PLAYER ? "" : " [" + command.tier().label() + "]";
+            ctx.say(String.format(formatSpecifier, command.name(), command.description(), tag));
         }
-        console.println("Type '<command> help' for details on a command.");
+        ctx.say("Type '<command> help' for details on a command.");
     }
 }

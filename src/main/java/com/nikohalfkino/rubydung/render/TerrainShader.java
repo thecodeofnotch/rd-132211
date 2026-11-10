@@ -58,8 +58,11 @@ public final class TerrainShader {
                     // y = the face shade.
                     "vec2 patchLight(vec3 c, vec3 p, mat3 M) {\n" +
                     "    vec3 col = clamp(vColor.rgb + M * (c - p), 0.0, 1.0);\n" +
-                    "    float s = col.r * ambient;\n" +
-                    "    float l = pow(clamp(s + (1.0 - s) * col.g, 0.0, 1.0), LIGHT_CONTRAST);\n" +
+                    // the contrast curves the sky light and the block light themselves, before the ambient scales the sky: the
+                    // terrain's own brightness at night is the ambient's business, a curve must not crush it to black
+                    "    float s = pow(clamp(col.r, 0.0, 1.0), LIGHT_CONTRAST) * ambient;\n" +
+                    "    float b = pow(clamp(col.g, 0.0, 1.0), LIGHT_CONTRAST);\n" +
+                    "    float l = clamp(s + (1.0 - s) * b, 0.0, 1.0);\n" +
                     "    float w = max(LIGHT_SMOOTH, 1.0e-4);\n" +
                     "    float q = l * LIGHT_STEPS + 0.5 - 0.5 * w;\n" +
                     "    float level = floor(q) + smoothstep(1.0 - w, 1.0, fract(q));\n" +
@@ -108,6 +111,11 @@ public final class TerrainShader {
                     "    float light = faceLight();\n" +
                     "    applyDither();\n" +
                     "    vec4 c = texture2D(tex, gl_TexCoord[0].st);\n" +
+                    // a fully see-through texel draws nothing and writes no depth: the liquids are drawn after the terrain, and
+                    // one behind a window or a grate would otherwise be hidden by the empty pixels of the pane
+                    "    if (c.a < 0.02) {\n" +
+                    "        discard;\n" +
+                    "    }\n" +
                     "    vec3 rgb = c.rgb * light;\n" +
 
                     // terrain faces are tinted by the depth of the cell they were packed for (alpha is not snapped)

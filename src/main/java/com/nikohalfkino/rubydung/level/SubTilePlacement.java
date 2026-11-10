@@ -1,8 +1,8 @@
 package com.nikohalfkino.rubydung.level;
 
 import com.nikohalfkino.rubydung.player.HitResult;
-import com.nikohalfkino.rubydung.level.tiles.PaneTile;
-import com.nikohalfkino.rubydung.level.tiles.SlabTile;
+import com.nikohalfkino.rubydung.level.tiles.common.PaneTile;
+import com.nikohalfkino.rubydung.level.tiles.common.SlabTile;
 import com.nikohalfkino.rubydung.level.tiles.Tile;
 import com.nikohalfkino.rubydung.phys.AABB;
 

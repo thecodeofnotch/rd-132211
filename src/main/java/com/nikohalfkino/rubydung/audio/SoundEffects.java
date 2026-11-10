@@ -180,9 +180,18 @@ public final class SoundEffects {
     }
 
     public static void playTile(String tileName, String event) {
+        playTile(tileName, event, 1.0F);
+    }
+
+    /** like playTile, scaled by volume (e.g. a block changed far away by another player) */
+    public static void playTile(Tile tile, String event, float volume) {
+        playTile(tile != null ? tile.name : null, event, volume);
+    }
+
+    public static void playTile(String tileName, String event, float volume) {
         String sound = config.tileSound(tileName, event);
         if (sound != null) {
-            play(sound);
+            play(sound, volume);
         }
     }
 

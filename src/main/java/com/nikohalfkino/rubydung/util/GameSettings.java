@@ -17,6 +17,9 @@ public final class GameSettings {
     public static final String DEFAULT_USERNAME = "Hakumu";
     public static final int MAX_USERNAME_LENGTH = 16;
 
+    /** longest server address (host or host:port) that is remembered */
+    public static final int MAX_SERVER_ADDRESS_LENGTH = 64;
+
     public static final int MIN_PIXEL_SIZE = 2;
     public static final int MAX_PIXEL_SIZE = 4;
     public static final int DEFAULT_PIXEL_SIZE = 2;
@@ -45,6 +48,8 @@ public final class GameSettings {
     private static float musicVolume = 0.15f;
     private static float sfxVolume = 0.8f;
     private static String username = DEFAULT_USERNAME;
+    // the multiplayer address typed last, filled into the join screen so it survives closing the game
+    private static String lastServer = "";
     private static DisplayType displayType = DisplayType.WINDOWED;
     // last non-fullscreen state so F11 can go back to it, not saved
     private static DisplayType lastWindowType = DisplayType.WINDOWED;
@@ -125,6 +130,28 @@ public final class GameSettings {
             }
         }
         username = cleaned.isEmpty() ? DEFAULT_USERNAME : cleaned;
+    }
+
+    /** the server address last joined (or tried), "" if there is none yet */
+    public static String getLastServer() {
+        return lastServer;
+    }
+
+    /** drops control characters, trims and cuts to MAX_SERVER_ADDRESS_LENGTH. does not save, call save() */
+    public static void setLastServer(String address) {
+        StringBuilder builder = new StringBuilder();
+        if (address != null) {
+            for (char c : address.toCharArray()) {
+                if (c >= 32 && c != 127) {
+                    builder.append(c);
+                }
+            }
+        }
+        String cleaned = builder.toString().trim();
+        if (cleaned.length() > MAX_SERVER_ADDRESS_LENGTH) {
+            cleaned = cleaned.substring(0, MAX_SERVER_ADDRESS_LENGTH).trim();
+        }
+        lastServer = cleaned;
     }
 
     public static DisplayType getDisplayType() {
@@ -238,6 +265,11 @@ public final class GameSettings {
         if (savedName != null) {
             setUsername(savedName);
         }
+
+        String savedServer = props.getProperty("lastServer");
+        if (savedServer != null) {
+            setLastServer(savedServer);
+        }
     }
 
     public static void save() {
@@ -252,6 +284,7 @@ public final class GameSettings {
         props.setProperty("musicVolume", Float.toString(musicVolume));
         props.setProperty("sfxVolume", Float.toString(sfxVolume));
         props.setProperty("username", username);
+        props.setProperty("lastServer", lastServer);
         props.setProperty("displayType", displayType.name());
         props.setProperty("fullscreenMode", fullscreenMode.name());
         props.setProperty("maximizedMode", maximizedMode.name());

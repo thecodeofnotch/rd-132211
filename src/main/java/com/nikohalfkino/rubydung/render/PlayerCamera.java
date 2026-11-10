@@ -206,6 +206,25 @@ public final class PlayerCamera {
         glTranslated(-this.pivotX, -this.pivotY, -this.pivotZ);
     }
 
+    /**
+     * a copy of this frame's pose as a WorldView, for GameRenderer.renderWorld (and so for screenshots). call after update()
+     *
+     * the sky belongs to the player, not to the camera: in the freecam it stays centred on the player, so the camera can fly out and look at it up close (or from outside). otherwise the camera is the centre
+     */
+    public CameraSnapshot snapshot(Player player, float partialTicks) {
+        double skyX = this.posX;
+        double skyY = this.posY;
+        double skyZ = this.posZ;
+        if (this.freecam) {
+            skyX = player.prevX + (player.x - player.prevX) * partialTicks;
+            skyY = player.prevY + (player.y - player.prevY) * partialTicks;
+            skyZ = player.prevZ + (player.z - player.prevZ) * partialTicks;
+        }
+        return new CameraSnapshot(this.pivotX, this.pivotY, this.pivotZ, CAMERA_BACK_OFFSET, this.distance,
+                this.yaw, this.pitch, this.posX, this.posY, this.posZ, skyX, skyY, skyZ,
+                this.freecam, isPlayerVisible());
+    }
+
     // Internals
 
     // unit vector the camera looks along (same convention as the pick ray)

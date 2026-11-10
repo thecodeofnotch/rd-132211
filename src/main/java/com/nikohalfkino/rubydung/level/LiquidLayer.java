@@ -1,6 +1,6 @@
 package com.nikohalfkino.rubydung.level;
 
-import com.nikohalfkino.rubydung.level.tiles.LiquidTile;
+import com.nikohalfkino.rubydung.level.tiles.special.LiquidTile;
 import com.nikohalfkino.rubydung.level.tiles.Tile;
 
 import java.io.BufferedInputStream;
@@ -31,18 +31,13 @@ import java.util.zip.GZIPOutputStream;
  *   a cell is ocean when  y > floor[column]  and  y <= seaTop  and  seaTop > limit[column]  and no block fills it
  *
  *   floor  the highest block of the column when the world was made (for a sea column: the sea bed). it never changes afterwards
- *   limit  -1 for the columns that held water when the world was made (the SEA). for every other column it is the height of the world, so a
- *          dry column is never ocean on its own
+ *   limit  -1 for the columns that held water when the world was made (the SEA). for every other column the higher of its floor and the
+ *          starting sea level, so a dry column is ocean once the sea is over its top
  *
- * so the virtual ocean is only the sea as it was generated. EVERYTHING ELSE the sea reaches is real water: when the sea is over a cell that
- * is open (not under a full block...) and the cell is connected to ocean water through open cells (sideways, up or down: overhangs, tunnels
- * and holes under a block are reached like anything else), the cell gets a stored full cell of the ocean's liquid (see floodLayer / floodFrom).
- * that happens when the sea rises over a layer, and when a block is removed next to water. the tile appears once the sea surface passes the
- * surface height of a tile (floodedTo), so it lines up with the sea plane
- *
- * stored water is ordinary liquid: when the sea goes down it is NOT removed. it is woken (wakeLayerLiquids) and the finite simulation lets
- * it run downhill, where it either runs back into the sea or stays in whatever basin holds it. a pit dug on the beach keeps its water after
- * the tide leaves, until the player empties it
+ * the sea never writes water tiles: a dry column has a limit of its top block (or the starting sea level), so when the sea rises over it the
+ * column's open cells simply become virtual ocean. cells under overhangs and in tunnels below a column's top block are not reached (they are
+ * under the floor). stored water that already exists (old saves, buckets, the simulation) is ordinary liquid: when the sea goes down it is
+ * woken (wakeLayerLiquids) and the finite simulation lets it run downhill
  *
  * the ocean answers get / has / getFill like any stored liquid (always a full source), so swimming, the raycaster and the simulator don't care where a cell's water comes from. what is stored in cells / fills is only what differs from it: another liquid in an ocean cell, a flowing cell, or a hole (the `holes` set: ocean water that was taken away).
  * changing the sea height is one number: no cell is written and no chunk mesh is rebuilt (see OceanSurface and UnderwaterTint)
@@ -372,24 +367,10 @@ public final class LiquidLayer {
      * handles water there)
      */
     void blockChanged(int x, int y, int z) {
-        if (!this.oceanOn || !inside(x, y, z) || y > this.floodedTo) {
-            return;
-        }
-        int i = index(x, y, z);
-        if (openDry(i) && touchesWater(i)) {
-            beginFlood();
-            fillCell(i);
-            runFlood();
-        }
+        // the sea never writes water tiles (they made rising and digging lag): the virtual ocean and the surface mesh are all it is
     }
 
     // ---- flooding: real water tiles where the sea reaches ----
-
-    /** the most cells one flood places (a safety net, a layer of a big beach is far below it) */
-    private static final int MAX_FLOOD_CELLS = 1 << 20;
-
-    private int[] floodQueue = new int[1 << 12];
-    private int floodHead, floodTail;
 
     /** the highest layer whose tiles are covered by the sea surface: a stored cell's surface is SURFACE_HEIGHT above its bottom */
     private int floodLevel() {
@@ -397,7 +378,7 @@ public final class LiquidLayer {
     }
 
     /**
-     * called whenever the sea height is set. going up over a layer: the layer (and what is open behind it) is flooded. going down: the
+     * called whenever the sea height is set. going up places nothing (the virtual ocean covers it). going down: the
      * water tiles above the new level are woken so the simulation can drain them (or leave them, in a basin)
      */
     private void syncFlood() {
@@ -411,31 +392,9 @@ public final class LiquidLayer {
         }
         int old = this.floodedTo;
         this.floodedTo = target;
-        if (target > old) {
-            for (int y = Math.max(old + 1, 0); y <= Math.min(target, this.depth - 1); y++) {
-                floodLayer(y);
-            }
-        } else {
+        if (target < old) {
             for (int y = Math.max(target + 1, 0); y <= Math.min(old, this.depth - 1); y++) {
                 wakeLayerLiquids(y);
-            }
-        }
-    }
-
-    /**
-     * older saves: a dry column was virtual ocean once the sea was over its limit. that exact water (and nothing else) is written as real
-     * water tiles, so the world looks the same as when it was saved
-     */
-    private void convertLegacyBeaches(short[] oldLimit) {
-        for (int c = 0; c < this.layerSize; c++) {
-            if (oldLimit[c] < 0 || oldLimit[c] >= this.depth || this.seaTop <= oldLimit[c]) {
-                continue;
-            }
-            for (int y = this.floor[c] + 1; y <= Math.min(this.floodedTo, this.depth - 1); y++) {
-                int i = y * this.layerSize + c;
-                if (!this.holes.get(i) && openDry(i)) {
-                    applyRaw(i, this.oceanValue, (byte) MAX_FILL);
-                }
             }
         }
     }
@@ -455,70 +414,6 @@ public final class LiquidLayer {
         int y = i / this.layerSize;
         int c = i - y * this.layerSize;
         return typeAt(i) == 0 && !displacesId(this.level.getTile(c % this.width, y, c / this.width));
-    }
-
-    private boolean isWater(int i) {
-        return typeAt(i) == this.oceanValue && fillAt(i) >= MAX_FILL;
-    }
-
-    /** a side neighbour, the cell below or the cell above (inside the flood level) is a full cell of ocean water */
-    private boolean touchesWater(int i) {
-        int y = i / this.layerSize;
-        int c = i - y * this.layerSize;
-        int x = c % this.width;
-        int z = c / this.width;
-        return (x > 0 && isWater(i - 1))
-                || (x < this.width - 1 && isWater(i + 1))
-                || (z > 0 && isWater(i - this.width))
-                || (z < this.height - 1 && isWater(i + this.width))
-                || (y > 0 && isWater(i - this.layerSize))
-                || (y < this.depth - 1 && y < this.floodedTo && isWater(i + this.layerSize));
-    }
-
-    private void beginFlood() {
-        this.floodHead = 0;
-        this.floodTail = 0;
-    }
-
-    /** puts ocean water in the cell and queues it, so what is open around it is looked at next */
-    private void fillCell(int i) {
-        applyRaw(i, this.oceanValue, (byte) MAX_FILL);
-        if (this.floodTail == this.floodQueue.length) {
-            this.floodQueue = java.util.Arrays.copyOf(this.floodQueue, this.floodQueue.length << 1);
-        }
-        this.floodQueue[this.floodTail++] = i;
-    }
-
-    /** one layer: every open cell that touches ocean water is filled, then the water goes on through whatever is open (up to the flood level) */
-    private void floodLayer(int y) {
-        int base = y * this.layerSize;
-        beginFlood();
-        for (int c = 0; c < this.layerSize; c++) {
-            int i = base + c;
-            if (this.cells[i] == 0 && openDry(i) && touchesWater(i)) {
-                fillCell(i);
-            }
-        }
-        runFlood();
-    }
-
-    private void runFlood() {
-        int placed = 0;
-        while (this.floodHead < this.floodTail && placed < MAX_FLOOD_CELLS) {
-            int i = this.floodQueue[this.floodHead++];
-            int y = i / this.layerSize;
-            int c = i - y * this.layerSize;
-            int x = c % this.width;
-            int z = c / this.width;
-            if (x > 0 && openDry(i - 1)) { fillCell(i - 1); placed++; }
-            if (x < this.width - 1 && openDry(i + 1)) { fillCell(i + 1); placed++; }
-            if (z > 0 && openDry(i - this.width)) { fillCell(i - this.width); placed++; }
-            if (z < this.height - 1 && openDry(i + this.width)) { fillCell(i + this.width); placed++; }
-            if (y > 0 && openDry(i - this.layerSize)) { fillCell(i - this.layerSize); placed++; }
-            if (y < this.floodedTo && y < this.depth - 1 && openDry(i + this.layerSize)) { fillCell(i + this.layerSize); placed++; }
-        }
-        this.floodHead = 0;
-        this.floodTail = 0;
     }
 
     /** makes the simulation look at this cell and its neighbours again. Level calls it for every block placed or removed; it costs nothing where there is no liquid around */
@@ -679,32 +574,88 @@ public final class LiquidLayer {
                        BitSet holeSet, short[] floorData, short[] limitData) {
         try (DataOutputStream out = new DataOutputStream(new BufferedOutputStream(
                 new GZIPOutputStream(new FileOutputStream(file))))) {
-            List<LiquidTile> all = LiquidTile.all();
-            out.writeInt(this.width);
-            out.writeInt(this.depth);
-            out.writeInt(this.height);
-            out.writeInt(all.size());
-            for (LiquidTile liquid : all) {
-                out.writeUTF(liquid.name);
-            }
-
-            writeRuns(out, cellData);
-            writeRuns(out, fillData);
-
-            if (ocean) {
-                out.writeInt(OCEAN_MAGIC);
-                out.writeFloat(sea);
-                out.writeUTF(oceanName);
-                out.writeInt(holeSet.cardinality());
-                for (int i = holeSet.nextSetBit(0); i >= 0; i = holeSet.nextSetBit(i + 1)) {
-                    out.writeInt(i);
-                }
-                writeShortRuns(out, floorData);
-                writeShortRuns(out, limitData);
-            }
+            writeBody(out, cellData, fillData, ocean, sea, oceanName, holeSet, floorData, limitData);
         } catch (IOException e) {
             System.err.println("[LiquidLayer] could not save " + file + ": " + e);
         }
+    }
+
+    /** the save format without the gzip and the file around it, so the network snapshot can put it inside its own stream */
+    private void writeBody(DataOutputStream out, byte[] cellData, byte[] fillData, boolean ocean, float sea,
+                           String oceanName, BitSet holeSet, short[] floorData, short[] limitData) throws IOException {
+        List<LiquidTile> all = LiquidTile.all();
+        out.writeInt(this.width);
+        out.writeInt(this.depth);
+        out.writeInt(this.height);
+        out.writeInt(all.size());
+        for (LiquidTile liquid : all) {
+            out.writeUTF(liquid.name);
+        }
+
+        writeRuns(out, cellData);
+        writeRuns(out, fillData);
+
+        if (ocean) {
+            out.writeInt(OCEAN_MAGIC);
+            out.writeFloat(sea);
+            out.writeUTF(oceanName);
+            out.writeInt(holeSet.cardinality());
+            for (int i = holeSet.nextSetBit(0); i >= 0; i = holeSet.nextSetBit(i + 1)) {
+                out.writeInt(i);
+            }
+            writeShortRuns(out, floorData);
+            writeShortRuns(out, limitData);
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // network snapshot: a copy of the layer made a slice per tick by the server (see NetworkSnapshot.Capture) and
+    // written on another thread. cells that change while it is being copied are not mirrored into it on purpose:
+    // every change is also broadcast to the joining player, who replays them over the snapshot, so each cell ends up
+    // with its latest value either way
+
+    /** a frozen copy of the layer, filled by copySlice */
+    static final class Frozen {
+        final byte[] cells;
+        final byte[] fills;
+        final boolean ocean;
+        final float sea;
+        final String oceanName;
+        final BitSet holes;
+        final short[] floor;
+        final short[] limit;
+        private int copied = 0;
+
+        private Frozen(LiquidLayer layer) {
+            this.cells = new byte[layer.cells.length];
+            this.fills = new byte[layer.fills.length];
+            this.ocean = layer.oceanOn;
+            this.sea = layer.seaHeight;
+            this.oceanName = this.ocean ? layer.oceanLiquid.name : null;
+            this.holes = (BitSet) layer.holes.clone();
+            this.floor = layer.floor == null ? null : layer.floor.clone();
+            this.limit = layer.limit == null ? null : layer.limit.clone();
+        }
+    }
+
+    /** takes the small parts (sea, holes, floor, limit) now, the big arrays are copied by copyFrozenSlice */
+    Frozen freeze() {
+        return new Frozen(this);
+    }
+
+    /** copies up to count more cells into the frozen copy, true once everything is copied */
+    boolean copyFrozenSlice(Frozen frozen, int count) {
+        int n = Math.min(count, this.cells.length - frozen.copied);
+        System.arraycopy(this.cells, frozen.copied, frozen.cells, frozen.copied, n);
+        System.arraycopy(this.fills, frozen.copied, frozen.fills, frozen.copied, n);
+        frozen.copied += n;
+        return frozen.copied >= this.cells.length;
+    }
+
+    /** any thread: writes a finished frozen copy in the save format, uncompressed (the caller's stream compresses) */
+    void writeFrozen(Frozen frozen, DataOutputStream out) throws IOException {
+        writeBody(out, frozen.cells, frozen.fills, frozen.ocean, frozen.sea, frozen.oceanName, frozen.holes,
+                frozen.floor, frozen.limit);
     }
 
     private static void writeRuns(DataOutputStream out, byte[] data) throws IOException {
@@ -789,7 +740,8 @@ public final class LiquidLayer {
                         y--;
                     }
                     floors[c] = (short) y;
-                    limits[c] = (short) this.depth;        // dry land is never ocean on its own, the sea floods it cell by cell (floodLayer)
+                    // dry land stays dry until the sea rises over its top: it then becomes virtual ocean, no tiles are written
+                    limits[c] = (short) Math.max(y, surface);
                 }
             }
         });
@@ -815,8 +767,18 @@ public final class LiquidLayer {
         }
         try (DataInputStream in = new DataInputStream(new BufferedInputStream(
                 new GZIPInputStream(new FileInputStream(file))))) {
+            return load(in);
+        } catch (IOException e) {
+            System.err.println("[LiquidLayer] could not load " + file + ": " + e);
+            return false;
+        }
+    }
+
+    /** same as load(File) from an open stream (the network snapshot). the layer's data must be the last thing in the stream */
+    boolean load(DataInputStream in) throws IOException {
+        {
             if (in.readInt() != this.width || in.readInt() != this.depth || in.readInt() != this.height) {
-                System.err.println("[LiquidLayer] " + file + " is for a different world size, ignored");
+                System.err.println("[LiquidLayer] saved liquids are for a different world size, ignored");
                 return false;
             }
 
@@ -908,16 +870,6 @@ public final class LiquidLayer {
             this.holes.clear();
             this.seaRate = 0.0F;
             if (ocean) {
-                // older saves gave a dry column the height the sea had to pass to flood it: dry land is never virtual ocean now
-                short[] legacyLimit = null;
-                for (int c = 0; c < savedLimit.length; c++) {
-                    if (savedLimit[c] >= 0 && savedLimit[c] < this.depth) {
-                        if (legacyLimit == null) {
-                            legacyLimit = savedLimit.clone();
-                        }
-                        savedLimit[c] = (short) this.depth;
-                    }
-                }
                 this.floor = savedFloor;
                 this.limit = savedLimit;
                 this.holes.or(savedHoles);
@@ -927,8 +879,13 @@ public final class LiquidLayer {
                 this.floodedTo = Integer.MIN_VALUE;
                 setSeaHeight(savedSea);
                 this.seaTarget = this.seaHeight;
-                if (legacyLimit != null) {
-                    convertLegacyBeaches(legacyLimit);
+                // a version of the game saved every dry column with the depth of the world as its limit, which made dry land
+                // un-floodable (the sea rose but kept the shape it had when the world was made). those columns get the
+                // limit a dry column has: the top of its floor, or the sea as it is now if that is higher, so a rising sea covers them again
+                for (int c = 0; c < this.limit.length; c++) {
+                    if (this.limit[c] >= this.depth) {
+                        this.limit[c] = (short) Math.max(this.floor[c], this.seaTop);
+                    }
                 }
             } else {
                 this.oceanOn = false;
@@ -938,9 +895,6 @@ public final class LiquidLayer {
 
             this.simulator.wakeUnsettled();     // flowing liquid saved without a source drains once
             return true;
-        } catch (IOException e) {
-            System.err.println("[LiquidLayer] could not load " + file + ": " + e);
-            return false;
         }
     }
 }

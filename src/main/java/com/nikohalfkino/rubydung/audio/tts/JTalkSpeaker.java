@@ -57,6 +57,8 @@ public final class JTalkSpeaker {
 
     // a run of kana spoken at one pitch offset
     private static final class Segment {
+        // whose voice this is, null = this player's own settings
+        VoiceProfile profile;
         final String kana;
         // half-tones on top of the settings pitch
         final float pitchOffset;
@@ -89,7 +91,25 @@ public final class JTalkSpeaker {
 
     // lifecycle
 
-    private final BlockingDeque<String> queue = new LinkedBlockingDeque<>(QUEUE_CAPACITY);
+    // what is waiting to be said, and in whose voice
+    private static final class Utterance {
+        final String text;
+        final VoiceProfile profile;
+
+        Utterance(String text, VoiceProfile profile) {
+            this.text = text;
+            this.profile = profile;
+        }
+    }
+
+    private final BlockingDeque<Utterance> queue = new LinkedBlockingDeque<>(QUEUE_CAPACITY);
+
+    // a positional speaker is somebody else in the world: its audio is stereo and scaled by gain / pan, which the
+    // owner updates while it plays (setPosition)
+    private final boolean positional;
+    private final int workerCount;
+    private volatile float gain = 1.0f;
+    private volatile float pan = 0.0f;
     private volatile boolean running;
     private boolean warnedNoVoice;
     private Thread thread;
@@ -118,10 +138,27 @@ public final class JTalkSpeaker {
         }
     };
 
+    /** the speaker of the local player */
+    public JTalkSpeaker() {
+        this(false, Math.max(2, Math.min(4, Runtime.getRuntime().availableProcessors())));
+    }
+
+    /** positional = another player heard in the world, workers = threads that render its notes */
+    public JTalkSpeaker(boolean positional, int workers) {
+        this.positional = positional;
+        this.workerCount = Math.max(1, workers);
+    }
+
+    /** where the voice is right now: gain 0..1 (distance) and pan -1 (left) .. 1 (right). only used by positional speakers */
+    public void setPosition(float gain, float pan) {
+        this.gain = Math.max(0.0f, Math.min(1.0f, gain));
+        this.pan = Math.max(-1.0f, Math.min(1.0f, pan));
+    }
+
     public synchronized void start() {
         if (this.thread != null) return;
         this.running = true;
-        int workers = Math.max(2, Math.min(4, Runtime.getRuntime().availableProcessors()));
+        int workers = this.workerCount;
         this.pool = Executors.newFixedThreadPool(workers, r -> {
             Thread th = new Thread(r, "JTalk-render");
             th.setDaemon(true);
@@ -148,10 +185,15 @@ public final class JTalkSpeaker {
 
     /** no-op if disabled, blank or the queue is full, safe from any thread */
     public void speak(String text) {
+        speak(text, null);
+    }
+
+    /** in somebody's voice (null = this player's own settings). same rules as speak(text) */
+    public void speak(String text, VoiceProfile profile) {
         if (!JTalkSettings.isEnabled() || text == null) return;
         text = LINK.matcher(text).replaceAll(" ").trim();
         if (text.isEmpty()) return;   // nothing but links
-        this.queue.offer(text);   // non-blocking; drops if full
+        this.queue.offer(new Utterance(text, profile));   // non-blocking; drops if full
     }
 
     /** also cuts off the one that's playing */
@@ -176,8 +218,8 @@ public final class JTalkSpeaker {
     private void loop() {
         while (this.running) {
             try {
-                String raw = this.queue.take();
-                handleUtterance(raw);
+                Utterance utterance = this.queue.take();
+                handleUtterance(utterance);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 break;
@@ -187,8 +229,10 @@ public final class JTalkSpeaker {
         }
     }
 
-    private void handleUtterance(String raw) throws Exception {
-        if (JTalkSettings.getVoicePath().isEmpty()) {
+    private void handleUtterance(Utterance utterance) throws Exception {
+        String raw = utterance.text;
+        String voicePath = utterance.profile != null ? utterance.profile.voicePath() : JTalkSettings.getVoicePath();
+        if (voicePath.isEmpty()) {
             if (!this.warnedNoVoice) {
                 this.warnedNoVoice = true;
                 System.err.println("JTalkSpeaker: no voicePath set in jtalk.txt (point it at a .htsvoice file).");
@@ -197,6 +241,7 @@ public final class JTalkSpeaker {
         }
         List<Segment> segments = buildSegments(raw);
         if (segments.isEmpty()) return;
+        for (Segment seg : segments) seg.profile = utterance.profile;
 
         final int gen = this.generation.get();
         final ExecutorService workers = this.pool;
@@ -250,15 +295,16 @@ public final class JTalkSpeaker {
                 if (pcm == null || pcm.data.length == 0) continue;
 
                 AudioFormat fmt = pcm.format;
-                if (line == null || !formatsMatch(line.getFormat(), fmt)) {
+                AudioFormat outFmt = outputFormat(fmt);
+                if (line == null || !formatsMatch(line.getFormat(), outFmt)) {
                     if (line != null) { line.drain(); line.close(); line = null; this.activeLine = null; }
-                    DataLine.Info info = new DataLine.Info(SourceDataLine.class, fmt);
+                    DataLine.Info info = new DataLine.Info(SourceDataLine.class, outFmt);
                     if (!AudioSystem.isLineSupported(info)) {
-                        System.err.println("JTalkSpeaker: unsupported format: " + fmt);
+                        System.err.println("JTalkSpeaker: unsupported format: " + outFmt);
                         continue;
                     }
                     line = (SourceDataLine) AudioSystem.getLine(info);
-                    line.open(fmt);
+                    line.open(outFmt);
                     line.start();
                     this.cues.clear();
                     this.queuedMicros = 0;
@@ -282,7 +328,16 @@ public final class JTalkSpeaker {
                     int count = Math.min(4096, pcm.data.length - offset);
                     count -= count % frame;
                     if (count <= 0) break;
-                    line.write(pcm.data, offset, count);
+                    if (this.positional && isPcm16(fmt)) {
+                        byte[] shaped = shape(pcm.data, offset, count, fmt);
+                        line.write(shaped, 0, shaped.length);
+                    } else if (isPcm16(fmt) && JTalkSettings.getVolume() < 0.999f) {
+                        // the local player's own voice: the voice volume setting, read per chunk so the slider is heard at once
+                        byte[] scaled = scaleVolume(pcm.data, offset, count, JTalkSettings.getVolume());
+                        line.write(scaled, 0, scaled.length);
+                    } else {
+                        line.write(pcm.data, offset, count);
+                    }
                     offset += count;
                 }
                 if (aborted) break;
@@ -296,6 +351,48 @@ public final class JTalkSpeaker {
             this.activeLine = null;
             this.cues.clear();
         }
+    }
+
+    // the format written to the line: a positional voice is always 16-bit stereo, so it can be panned
+    private AudioFormat outputFormat(AudioFormat source) {
+        if (!this.positional || !isPcm16(source) || source.getChannels() == 2) return source;
+        return new AudioFormat(source.getSampleRate(), 16, 2, true, false);
+    }
+
+    // count bytes of source audio as stereo, scaled by the current distance gain and equal-power pan
+    private byte[] shape(byte[] data, int offset, int count, AudioFormat source) {
+        float g = this.gain;
+        double angle = (this.pan + 1.0) * Math.PI / 4.0;
+        float left = (float) (g * Math.cos(angle));
+        float right = (float) (g * Math.sin(angle));
+
+        int channels = source.getChannels();
+        int frames = count / source.getFrameSize();
+        byte[] out = new byte[frames * 4];
+        for (int i = 0; i < frames; i++) {
+            int o = offset + i * source.getFrameSize();
+            int l = (short) ((data[o + 1] << 8) | (data[o] & 0xFF));
+            int r = channels > 1 ? (short) ((data[o + 3] << 8) | (data[o + 2] & 0xFF)) : l;
+            short sl = (short) Math.max(-32768, Math.min(32767, Math.round(l * left)));
+            short sr = (short) Math.max(-32768, Math.min(32767, Math.round(r * right)));
+            out[i * 4] = (byte) sl;
+            out[i * 4 + 1] = (byte) (sl >> 8);
+            out[i * 4 + 2] = (byte) sr;
+            out[i * 4 + 3] = (byte) (sr >> 8);
+        }
+        return out;
+    }
+
+    // 16-bit little endian samples times volume
+    private static byte[] scaleVolume(byte[] data, int offset, int count, float volume) {
+        byte[] out = new byte[count];
+        for (int i = 0; i + 1 < count; i += 2) {
+            int sample = (short) ((data[offset + i + 1] << 8) | (data[offset + i] & 0xFF));
+            short scaled = (short) Math.max(-32768, Math.min(32767, Math.round(sample * volume)));
+            out[i] = (byte) scaled;
+            out[i + 1] = (byte) (scaled >> 8);
+        }
+        return out;
     }
 
     // writes ms of silence (16-bit PCM, which is what open_jtalk writes), false if the utterance was cut off meanwhile
@@ -534,7 +631,7 @@ public final class JTalkSpeaker {
     // runs open_jtalk (or hits the cache), null on failure
     private Pcm synthPcm(String kana, Segment seg) throws IOException, InterruptedException,
             UnsupportedAudioFileException {
-        String key = JTalkSettings.getVoicePath() + '|' + String.join(",", params(seg)) + '|' + kana;
+        String key = voicePathOf(seg) + '|' + String.join(",", params(seg)) + '|' + kana;
         if (seg.sing) {
             synchronized (this.cache) {
                 Pcm hit = this.cache.get(key);
@@ -657,11 +754,12 @@ public final class JTalkSpeaker {
 
     // speed, pitch, alpha, voiced, jf as open_jtalk args
     private static String[] params(Segment seg) {
-        float speed  = seg.sing ? JTalkSettings.SING_SPEED  : JTalkSettings.getSpeed();
-        float voiced = seg.sing ? JTalkSettings.SING_VOICED : JTalkSettings.getVoiced();
-        float jf     = seg.sing ? JTalkSettings.SING_JF     : JTalkSettings.getJf();
-        float pitch  = JTalkSettings.getPitch() + seg.pitchOffset;
-        float alpha  = JTalkSettings.getAlpha();
+        VoiceProfile p = seg.profile;
+        float speed  = seg.sing ? JTalkSettings.SING_SPEED  : (p != null ? p.speed : JTalkSettings.getSpeed());
+        float voiced = seg.sing ? JTalkSettings.SING_VOICED : (p != null ? p.voiced : JTalkSettings.getVoiced());
+        float jf     = seg.sing ? JTalkSettings.SING_JF     : (p != null ? p.jf : JTalkSettings.getJf());
+        float pitch  = (p != null ? p.pitch : JTalkSettings.getPitch()) + seg.pitchOffset;
+        float alpha  = p != null ? p.alpha : JTalkSettings.getAlpha();
         return new String[]{fmt(speed), fmt(pitch), fmt(alpha), fmt(voiced), fmt(jf)};
     }
 
@@ -670,7 +768,7 @@ public final class JTalkSpeaker {
         ProcessBuilder pb = new ProcessBuilder(
                 JTalkSettings.getExecPath(),
                 "-x",  JTalkSettings.getDicPath(),
-                "-m",  JTalkSettings.getVoicePath(),
+                "-m",  voicePathOf(seg),
                 "-ow", wavOut.getAbsolutePath(),
                 "-r",  p[0],
                 "-fm", p[1],
@@ -684,6 +782,10 @@ public final class JTalkSpeaker {
     }
 
     // helpers
+
+    private static String voicePathOf(Segment seg) {
+        return seg.profile != null ? seg.profile.voicePath() : JTalkSettings.getVoicePath();
+    }
 
     // locale-safe float format (always '.')
     private static String fmt(float v) {

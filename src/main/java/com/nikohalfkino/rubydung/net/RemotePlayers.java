@@ -1,65 +1,63 @@
 package com.nikohalfkino.rubydung.net;
 
-import com.nikohalfkino.rubydung.interfaces.Gui2D;
+import com.nikohalfkino.rubydung.audio.tts.JTalkSettings;
+import com.nikohalfkino.rubydung.audio.tts.JTalkSpeaker;
+import com.nikohalfkino.rubydung.audio.tts.VoiceProfile;
 import com.nikohalfkino.rubydung.level.Level;
+import com.nikohalfkino.rubydung.level.tiles.special.DimensionalDoorTile;
+import com.nikohalfkino.rubydung.level.tiles.Tile;
 import com.nikohalfkino.rubydung.player.Player;
 import com.nikohalfkino.rubydung.render.Font;
+import com.nikohalfkino.rubydung.render.NameTags;
 import com.nikohalfkino.rubydung.render.PlayerCamera;
 import com.nikohalfkino.rubydung.render.PlayerRenderer;
-import org.lwjgl.BufferUtils;
-import org.lwjgl.util.glu.GLU;
+import com.nikohalfkino.rubydung.util.GameSettings;
 
-import java.nio.FloatBuffer;
-import java.nio.IntBuffer;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-import static org.lwjgl.opengl.GL11.*;
-
 /** the other players in the world being played: updated from packets, drawn every frame. main thread only */
 public final class RemotePlayers {
 
-    private static final double NAME_TAG_RANGE = 64.0D;
+    // kept for the callers that read them here, the values live with the tag drawing
+    public static final double NAME_TAG_RANGE = NameTags.RANGE;
+    public static final int NAME_TAG_GAP = NameTags.GAP;
+    public static final float TAG_REFERENCE_DISTANCE = NameTags.REFERENCE_DISTANCE;
+    public static final float TAG_BASE_SCALE = NameTags.BASE_SCALE;
+    public static final float TAG_MIN_SCALE = NameTags.MIN_SCALE;
+    public static final float TAG_MAX_SCALE = NameTags.MAX_SCALE;
 
-    // how far above the feet the tag is anchored (the head is at about 1.8), plus a gap in screen pixels
+    // a voice is heard up to this far (blocks), loud within VOICE_FULL_RANGE and fading out to nothing at VOICE_RANGE
+    private static final double VOICE_RANGE = 40.0D;
+    private static final double VOICE_FULL_RANGE = 3.0D;
+
+    // chat bubble: how long it stays (a base plus a bit per character), the drawing is NameTags'
+    private static final long BUBBLE_BASE_NANOS = 3_500_000_000L;
+    private static final long BUBBLE_PER_CHAR_NANOS = 60_000_000L;
+    private static final long BUBBLE_MAX_NANOS = 12_000_000_000L;
+    private static final int BUBBLE_MAX_CHARS = 140;
+
+    // how far above the feet the tag is anchored (the head is at about 1.8)
     private static final double NAME_TAG_HEIGHT = 2.35D;
-    private static final int NAME_TAG_GAP = 6;
-
-    // the tag is scaled by distance (a tag far away is smaller) but never outside these bounds,
-    // so it stays readable in the distance and doesn't fill the screen up close
-    // (a glyph is 8 px at scale 1, the old fixed tag was drawn at scale 2)
-    private static final float TAG_REFERENCE_DISTANCE = 10.0F;
-    private static final float TAG_BASE_SCALE = 2.0F;
-    private static final float TAG_MIN_SCALE = 1.5F;
-    private static final float TAG_MAX_SCALE = 3.0F;
 
     // name tags are projected to the screen while the 3D matrices are active and drawn later, with the HUD
-    private static final class Tag {
-        final String name;
-        final int color;
-        final float scale;
-        final float fx, fy;
+    private final NameTags nameTags = new NameTags();
 
-        Tag(String name, int color, float scale, float fx, float fy) {
-            this.name = name;
-            this.color = color;
-            this.scale = scale;
-            this.fx = fx;
-            this.fy = fy;
-        }
-    }
+    // who is typing a chat message (lower case name -> display name and when it runs out unless they are told again).
+    // entries run out by themselves, so a player who left or lost their connection cannot stay typing
+    private static final long TYPING_TIMEOUT_NANOS = 6_000_000_000L;
+    private final Map<String, Object[]> typing = new LinkedHashMap<>();
 
     private final Map<Integer, RemotePlayer> players = new LinkedHashMap<>();
-    private final List<Tag> tags = new ArrayList<>();
     private long lastFrameNanos = 0L;
 
-    private final FloatBuffer model = BufferUtils.createFloatBuffer(16);
-    private final FloatBuffer projection = BufferUtils.createFloatBuffer(16);
-    private final IntBuffer viewport = BufferUtils.createIntBuffer(16);
-    private final FloatBuffer window = BufferUtils.createFloatBuffer(3);
+    /** the tags of this frame: other things (a dice) add theirs after render() and before renderTags() */
+    public NameTags tags() {
+        return this.nameTags;
+    }
 
     public void add(RemotePlayer player) {
         this.players.put(player.id, player);
@@ -69,13 +67,132 @@ public final class RemotePlayers {
         return this.players.get(id);
     }
 
+    public void setTyping(String name, boolean on) {
+        String key = name.toLowerCase(java.util.Locale.ROOT);
+        if (on) {
+            this.typing.put(key, new Object[]{name, System.nanoTime() + TYPING_TIMEOUT_NANOS});
+        } else {
+            this.typing.remove(key);
+        }
+    }
+
+    public boolean isTyping(String name) {
+        Object[] entry = this.typing.get(name.toLowerCase(java.util.Locale.ROOT));
+        if (entry == null) {
+            return false;
+        }
+        if (System.nanoTime() > (Long) entry[1]) {
+            this.typing.remove(name.toLowerCase(java.util.Locale.ROOT));
+            return false;
+        }
+        return true;
+    }
+
+    /** the names of the players typing now, oldest first */
+    public List<String> typingNames() {
+        long now = System.nanoTime();
+        List<String> names = new ArrayList<>();
+        java.util.Iterator<Object[]> it = this.typing.values().iterator();
+        while (it.hasNext()) {
+            Object[] entry = it.next();
+            if (now > (Long) entry[1]) {
+                it.remove();
+            } else {
+                names.add((String) entry[0]);
+            }
+        }
+        return names;
+    }
+
     public RemotePlayer remove(int id) {
-        return this.players.remove(id);
+        RemotePlayer gone = this.players.remove(id);
+        if (gone != null) {
+            this.typing.remove(gone.name.toLowerCase(java.util.Locale.ROOT));
+        }
+        silence(gone);
+        return gone;
     }
 
     public void clear() {
+        for (RemotePlayer p : this.players.values()) {
+            silence(p);
+        }
         this.players.clear();
-        this.tags.clear();
+        this.typing.clear();
+        this.nameTags.clear();
+    }
+
+    private static void silence(RemotePlayer p) {
+        if (p != null && p.voice != null) {
+            p.voice.stop();
+            p.voice = null;
+        }
+    }
+
+    /**
+     * somebody in this world said something: a bubble over their head for a while and, if they sent a voice and are close
+     * enough, their voice from where they stand. listener is where this player is (eye position) and which way they look
+     */
+    public void hear(String sender, String text, String voice, double listenerX, double listenerY, double listenerZ,
+                     float listenerYaw) {
+        RemotePlayer speaker = null;
+        for (RemotePlayer p : this.players.values()) {
+            if (p.name.equalsIgnoreCase(sender)) {
+                speaker = p;
+                break;
+            }
+        }
+        if (speaker == null) {
+            return;   // not in this world (chat reaches every world, bubbles and voices only the one they are in)
+        }
+
+        this.typing.remove(speaker.name.toLowerCase(java.util.Locale.ROOT));
+        // a song shows as "[Singing...]" over their head too, the voice below still sings the real text
+        String bubbleText = com.nikohalfkino.rubydung.interfaces.ChatInputSyntax.displayed(text);
+        String shown = bubbleText.length() > BUBBLE_MAX_CHARS ? bubbleText.substring(0, BUBBLE_MAX_CHARS - 3) + "..." : bubbleText;
+        speaker.bubble = shown;
+        speaker.bubbleUntilNanos = System.nanoTime()
+                + Math.min(BUBBLE_MAX_NANOS, BUBBLE_BASE_NANOS + BUBBLE_PER_CHAR_NANOS * shown.length());
+
+        VoiceProfile profile = VoiceProfile.decode(voice);
+        if (profile == null || !JTalkSettings.isEnabled()) {
+            return;
+        }
+        double dx = speaker.drawX - listenerX;
+        double dy = speaker.drawY - listenerY;
+        double dz = speaker.drawZ - listenerZ;
+        if (dx * dx + dy * dy + dz * dz >= VOICE_RANGE * VOICE_RANGE) {
+            return;
+        }
+
+        if (speaker.voice == null) {
+            // one thread to render, one to play: enough for somebody who talks in turns
+            speaker.voice = new JTalkSpeaker(true, 1);
+            speaker.voice.start();
+        }
+        updateVoice(speaker, listenerX, listenerY, listenerZ, listenerYaw);
+        speaker.voice.speak(text, profile);
+    }
+
+    // sets how loud and from which side a speaking player is heard
+    private static void updateVoice(RemotePlayer p, double listenerX, double listenerY, double listenerZ, float listenerYaw) {
+        if (p.voice == null) {
+            return;
+        }
+        double dx = p.drawX - listenerX;
+        double dy = p.drawY - listenerY;
+        double dz = p.drawZ - listenerZ;
+        double distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
+
+        double closeness = distance <= VOICE_FULL_RANGE ? 1.0D
+                : Math.max(0.0D, (VOICE_RANGE - distance) / (VOICE_RANGE - VOICE_FULL_RANGE));
+        float gain = (float) (closeness * closeness) * GameSettings.getSfxVolume() * JTalkSettings.getVolume();
+
+        // right of the listener is (cos yaw, sin yaw), forward is (sin yaw, -cos yaw)
+        double yaw = Math.toRadians(listenerYaw);
+        double flat = Math.sqrt(dx * dx + dz * dz);
+        float pan = flat < 0.5D ? 0.0F : (float) ((dx * Math.cos(yaw) + dz * Math.sin(yaw)) / flat);
+        p.voice.setPosition(gain, pan);
     }
 
     public Collection<RemotePlayer> all() {
@@ -88,8 +205,9 @@ public final class RemotePlayers {
 
     /** 3D pass, after the terrain and before the billboards, like the local player's sprite */
     public void render(Level level, PlayerRenderer renderer, PlayerCamera camera) {
-        this.tags.clear();
-        if (this.players.isEmpty()) {
+        this.nameTags.begin();
+        List<GameClient.DoorInfo> doors = Multiplayer.serverDoors();
+        if (this.players.isEmpty() && doors.isEmpty()) {
             return;
         }
 
@@ -97,58 +215,56 @@ public final class RemotePlayers {
         float seconds = this.lastFrameNanos == 0L ? 0.0F : Math.min((now - this.lastFrameNanos) * 1.0E-9F, 0.25F);
         this.lastFrameNanos = now;
 
-        this.model.clear();
-        this.projection.clear();
-        this.viewport.clear();
-        glGetFloat(GL_MODELVIEW_MATRIX, this.model);
-        glGetFloat(GL_PROJECTION_MATRIX, this.projection);
-        glGetInteger(GL_VIEWPORT, this.viewport);
+        addDoorTags(level, doors, camera);
 
         for (RemotePlayer p : this.players.values()) {
             p.step(seconds);
+            updateVoice(p, camera.getX(), camera.getY(), camera.getZ(), camera.getYaw());
 
             double feetY = p.drawY - Player.EYE_HEIGHT;
-            renderer.renderRemote(level, p.drawX, feetY, p.drawZ, p.drawBodyYaw, camera);
+            renderer.renderRemote(level, p.drawX, feetY, p.drawZ, p.drawBodyYaw, p.isNoClip(), camera);
 
-            double dx = p.drawX - camera.getX();
-            double dy = p.drawY - camera.getY();
-            double dz = p.drawZ - camera.getZ();
-            double distanceSq = dx * dx + dy * dy + dz * dz;
-            if (distanceSq > NAME_TAG_RANGE * NAME_TAG_RANGE) {
-                continue;
+            String bubble = null;
+            if (p.bubble != null) {
+                if (now < p.bubbleUntilNanos) {
+                    bubble = p.bubble;
+                } else {
+                    p.bubble = null;
+                }
             }
-            float distance = (float) Math.sqrt(distanceSq);
-            float scale = Math.max(TAG_MIN_SCALE, Math.min(TAG_MAX_SCALE,
-                    TAG_BASE_SCALE * TAG_REFERENCE_DISTANCE / Math.max(distance, 0.001F)));
+            this.nameTags.add(p.drawX, feetY + NAME_TAG_HEIGHT, p.drawZ, camera, p.name, PlayerColors.of(p.name),
+                    bubble, bubble == null && isTyping(p.name));
+        }
+    }
 
-            this.window.clear();
-            boolean ok = GLU.gluProject((float) p.drawX, (float) (feetY + NAME_TAG_HEIGHT), (float) p.drawZ,
-                    this.model, this.projection, this.viewport, this.window);
-            float depth = this.window.get(2);
-            if (ok && depth > 0.0F && depth < 1.0F) {
-                float fx = (this.window.get(0) - this.viewport.get(0)) / this.viewport.get(2);
-                float fy = 1.0F - (this.window.get(1) - this.viewport.get(1)) / this.viewport.get(3);
-                this.tags.add(new Tag(p.name, PlayerColors.of(p.name), scale, fx, fy));
+    // a coloured door's tag floats this far above its top (doors are DimensionalDoorTile.HEIGHT tall)
+    private static final double DOOR_TAG_GAP = 0.4D;
+    private static final int NO_DESTINATION_COLOR = 0xAAAAAA;
+
+    /** a tag over every coloured door in range saying where it leads, like a player's name above their head (matrices are active) */
+    private void addDoorTags(Level level, List<GameClient.DoorInfo> doors, PlayerCamera camera) {
+        for (GameClient.DoorInfo door : doors) {
+            Tile tile = Tile.byId(level.getTile(door.x, door.y, door.z));
+            if (!(tile instanceof DimensionalDoorTile)) {
+                continue;   // the door was broken, the server's next list leaves it out
             }
+            boolean set = !door.destination.isEmpty();
+            this.nameTags.add(door.x + 0.5D, door.y + DimensionalDoorTile.HEIGHT + DOOR_TAG_GAP, door.z + 0.5D, camera,
+                    set ? door.destination : "No destination",
+                    set ? ((DimensionalDoorTile) tile).getColor().getTint() : NO_DESTINATION_COLOR);
+        }
+    }
+
+    /** the sprites at where they are drawn now, nothing else (no smoothing step, no tags): for screenshots */
+    public void renderModels(Level level, PlayerRenderer renderer, double viewX, double viewZ, float viewYaw) {
+        for (RemotePlayer p : this.players.values()) {
+            renderer.renderRemoteSeenFrom(level, p.drawX, p.drawY - Player.EYE_HEIGHT, p.drawZ, p.drawBodyYaw, p.isNoClip(),
+                    viewX, viewZ, viewYaw);
         }
     }
 
     /** HUD pass: the name tags found by render(), width and height are the HUD's size */
     public void renderTags(Font font, int width, int height) {
-        if (this.tags.isEmpty()) {
-            return;
-        }
-
-        Gui2D.begin(width, height);
-        for (Tag tag : this.tags) {
-            int textWidth = Math.round(font.getWidth(tag.name) * tag.scale);
-            int textHeight = Math.round(8 * tag.scale);
-            int x = Math.round(tag.fx * width) - textWidth / 2;
-            int y = Math.round(tag.fy * height) - textHeight - NAME_TAG_GAP;
-
-            Gui2D.fillRect(x - 3, y - 2, textWidth + 6, textHeight + 4, 0.0F, 0.0F, 0.0F, 0.4F);
-            font.drawStringScaled(tag.name, x, y, tag.color, tag.scale);
-        }
-        Gui2D.end();
+        this.nameTags.render(font, width, height);
     }
 }

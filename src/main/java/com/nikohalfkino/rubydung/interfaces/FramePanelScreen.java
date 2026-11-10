@@ -54,8 +54,13 @@ public abstract class FramePanelScreen extends Screen implements FrameScreen {
         }
 
         // As wide as the panel above it, flush with its left and right edges.
+        placeInBottomBar(this.cornerButton, this.layout.panelX, this.layout.panelWidth);
+    }
+
+    /** a button in the bar under the world view, the same height and centre line as the corner button. x is in real pixels */
+    protected final void placeInBottomBar(Widget widget, float x, float width) {
         float y = this.layout.viewY + this.layout.viewHeight + BOTTOM_BAR_CENTER - CORNER_BUTTON_HEIGHT / 2.0F;
-        place(this.cornerButton, this.layout.panelX, y, this.layout.panelWidth, CORNER_BUTTON_HEIGHT);
+        place(widget, x, y, width, CORNER_BUTTON_HEIGHT);
     }
 
     /** called every frame while a layout exists, before the widgets are measured */

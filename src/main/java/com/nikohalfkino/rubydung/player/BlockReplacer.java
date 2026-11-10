@@ -2,7 +2,10 @@ package com.nikohalfkino.rubydung.player;
 
 import com.nikohalfkino.rubydung.audio.SoundEffects;
 import com.nikohalfkino.rubydung.interfaces.hud.HandHud;
-import com.nikohalfkino.rubydung.level.tiles.LiquidTile;
+import com.nikohalfkino.rubydung.level.tiles.special.ChessPieceTile;
+import com.nikohalfkino.rubydung.level.tiles.special.CubeTile;
+import com.nikohalfkino.rubydung.level.tiles.special.DiceTile;
+import com.nikohalfkino.rubydung.level.tiles.special.LiquidTile;
 import com.nikohalfkino.rubydung.level.tiles.Tile;
 
 import java.util.List;
@@ -83,6 +86,10 @@ final class BlockReplacer {
         }
 
         Tile selected = this.ctx.selectedTile;
+
+        if (selected instanceof CubeTile || selected instanceof DiceTile || selected instanceof ChessPieceTile) {
+            return false; // a weighted cube, a dice and a chess piece are bodies, never a block to swap in
+        }
 
         if (selected instanceof LiquidTile) {
             // A liquid hit is already that liquid, nothing to swap. A block is replaced by the liquid.

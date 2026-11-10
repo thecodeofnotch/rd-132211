@@ -2,7 +2,7 @@ package com.nikohalfkino.rubydung.player;
 
 import com.nikohalfkino.rubydung.level.DoorRegistry;
 import com.nikohalfkino.rubydung.level.Level;
-import com.nikohalfkino.rubydung.level.tiles.DoorColor;
+import com.nikohalfkino.rubydung.level.tiles.special.DoorColor;
 
 /**
  * arriving through a dimensional door: puts the player in front of one of the world's doors matching the colour they came through, looking at it
@@ -21,6 +21,20 @@ public final class DoorTravel {
 
     /** moves the player to a door of the level matching picked (an exact colour match beats a regular door), false (player stays put) if there's no matching door or no free spot next to one */
     public static boolean arrive(Level level, Player player, DoorColor picked) {
+        double[] spot = findArrival(level, picked);
+        if (spot == null) {
+            return false;
+        }
+
+        player.setPositionAndRotation(spot[0], spot[1], spot[2], (float) spot[3], 0.0F);
+        return true;
+    }
+
+    /**
+     * where a player coming through a door of this colour stands: {x, y (eye height), z, yaw}, null if the level has no
+     * matching door or no free spot next to one. a server uses this to place a player without having a Player for them
+     */
+    public static double[] findArrival(Level level, DoorColor picked) {
         DoorRegistry.Entry best = null;
         int bestScore = Integer.MAX_VALUE;
 
@@ -37,12 +51,12 @@ public final class DoorTravel {
         }
 
         if (best == null) {
-            return false;
+            return null;
         }
 
         int[] spot = findStandingSpot(level, best);
         if (spot == null) {
-            return false;
+            return null;
         }
 
         double px = spot[0] + 0.5D;
@@ -51,10 +65,9 @@ public final class DoorTravel {
         // Forward is (sin(yaw), -cos(yaw)) in (x, z), see Player#moveRelative.
         double toDoorX = best.x + 0.5D - px;
         double toDoorZ = best.z + 0.5D - pz;
-        float yaw = (float) Math.toDegrees(Math.atan2(toDoorX, -toDoorZ));
+        double yaw = Math.toDegrees(Math.atan2(toDoorX, -toDoorZ));
 
-        player.setPositionAndRotation(px, best.y + PLAYER_EYE_HEIGHT + 0.05D, pz, yaw, 0.0F);
-        return true;
+        return new double[]{px, best.y + PLAYER_EYE_HEIGHT + 0.05D, pz, yaw};
     }
 
     // a cell beside the door where the player fits (feet and head free), preferring one with ground under it

@@ -28,6 +28,31 @@ public final class ChatInputSyntax implements TextField.Highlighter {
         this.commands = commands;
     }
 
+    /** what the chat and the speech bubbles show instead of the notes of a sung line */
+    public static final String SINGING_LABEL = "[Singing...]";
+
+    /** whether the voice treats this line as a song: it has a phoneme<duration,pitch> note or a pitch marker like [G4] / [+7] */
+    public static boolean isSinging(String text) {
+        if (text == null || text.isEmpty()) {
+            return false;
+        }
+        if (JTalkSpeaker.SINGING_NOTE.matcher(text).find()) {
+            return true;
+        }
+        Matcher marker = JTalkSpeaker.PITCH_MARKER.matcher(text);
+        while (marker.find()) {
+            if (JTalkSpeaker.isSingingMarker(marker.group(1))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** the text to show somebody for a chat line: a song only says it is being sung (the voice still gets the real text) */
+    public static String displayed(String text) {
+        return isSinging(text) ? SINGING_LABEL : text;
+    }
+
     /** a line starting with "." is a command, except ".<200,00>" which is a pause in a song */
     public static boolean isCommand(String text) {
         return text.startsWith(".") && !text.startsWith(".<");

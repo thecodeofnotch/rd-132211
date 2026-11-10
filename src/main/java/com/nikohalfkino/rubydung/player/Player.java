@@ -1,7 +1,7 @@
 package com.nikohalfkino.rubydung.player;
 
 import com.nikohalfkino.rubydung.level.Level;
-import com.nikohalfkino.rubydung.level.tiles.LiquidTile;
+import com.nikohalfkino.rubydung.level.tiles.special.LiquidTile;
 import com.nikohalfkino.rubydung.phys.AABB;
 import com.nikohalfkino.rubydung.util.KeyBinding;
 import com.nikohalfkino.rubydung.util.KeyMap;
@@ -42,6 +42,9 @@ public class Player {
 
     // set by PlayerCamera in freecam: movement keys are ignored (gravity and collisions still run)
     public boolean controlsLocked = false;
+
+    /** a menu / the console has the keyboard while the world keeps running (multiplayer): no movement keys, no block work */
+    public boolean screenLocked = false;
 
     private static final float BODY_TURN_PER_TICK = 40.0F;
     private static final double BODY_MOVE_EPSILON_SQ = 1.0E-5D;
@@ -172,7 +175,7 @@ public class Player {
         double dx = this.x - this.prevX;
         double dz = this.z - this.prevZ;
 
-        if (!this.controlsLocked && (KeyBinding.BREAK_BLOCK.isDown() || KeyBinding.PLACE_BLOCK.isDown())) {
+        if (!this.controlsLocked && !this.screenLocked && (KeyBinding.BREAK_BLOCK.isDown() || KeyBinding.PLACE_BLOCK.isDown())) {
             target = this.yRotation; // working on a block: face it
         } else if (dx * dx + dz * dz > BODY_MOVE_EPSILON_SQ) {
             // Same convention as the look direction: forward is (sin yaw, -cos yaw).
@@ -210,7 +213,7 @@ public class Player {
         MoveCommand cmd = this.command;
         cmd.clearMovement();
 
-        if (!this.controlsLocked) {
+        if (!this.controlsLocked && !this.screenLocked) {
             if (KeyBinding.FORWARD.isDown() || KeyMap.isDown(KeyMap.UP)) {
                 cmd.forward++;
             }

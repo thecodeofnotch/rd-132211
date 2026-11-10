@@ -106,8 +106,13 @@ public class Tile {
     // only matters for transparent tiles, which otherwise draw every face
     private int selfCullMask = 0;
 
-    // radius in blocks of the light it emits (0 = none)
+    // radius in blocks of the plain ball of light it emits from every cell (0 = none), see setLightRadius
     private float lightRadius = 0.0F;
+
+    // every light the tile gives off: the ball from setLightRadius first, then the ones added with addLight
+    private LightEmitter radiusEmitter = null;
+    private final List<LightEmitter> extraEmitters = new ArrayList<>();
+    private List<LightEmitter> lightEmitters = Collections.emptyList();
 
     // cells covered when placed unrotated (see setFootprint), 1x1x1 = an ordinary tile
     private int footprintX = 1;
@@ -261,7 +266,7 @@ public class Tile {
     /** whether this tile may go into the free half of a cell that holds a slab, drawn and collided as just the lower or upper half of itself. ordinary full blocks (stone, logs): everything that can't share a cell as a shape of its own */
     public boolean canClipToHalf() {
         return isSolid() && !isBillboard() && !isMultiTile() && occludesNeighbours()
-                && !emitsLight() && !isInteractable() && !(this instanceof SlabTile);
+                && !emitsLight() && !isInteractable();
     }
 
     /** whether the selection overlay follows getOutlineAABB even though it's a multi-tile object, which is otherwise outlined by its whole footprint. doors say true to be outlined by their real shape */
@@ -375,17 +380,46 @@ public class Tile {
         return this;
     }
 
+    /** the reach of its biggest light, 0 if it gives off none */
     public float getLightRadius() {
-        return this.lightRadius;
+        float radius = this.lightRadius;
+        for (LightEmitter emitter : this.extraEmitters) {
+            radius = Math.max(radius, Math.min(emitter.getRadius(), Level.MAX_LIGHT_RADIUS));
+        }
+        return radius;
     }
 
     public boolean emitsLight() {
-        return this.lightRadius > 0.0F;
+        return !this.lightEmitters.isEmpty();
     }
 
+    /** every light this tile gives off, see LightEmitter. empty = none */
+    public List<LightEmitter> getLightEmitters() {
+        return this.lightEmitters;
+    }
+
+    /** a ball of light of this radius around every cell of the tile. 0 = none. (other shapes: addLight) */
     public Tile setLightRadius(float radius) {
         this.lightRadius = Math.min(Math.max(radius, 0.0F), Level.MAX_LIGHT_RADIUS);
+        this.radiusEmitter = this.lightRadius > 0.0F ? LightEmitter.everyCell().radius(this.lightRadius) : null;
+        refreshLightEmitters();
         return this;
+    }
+
+    /** adds a light of its own: a cone, a ball from the top cell, one beside the tile... as many as wanted, together with setLightRadius's */
+    public Tile addLight(LightEmitter emitter) {
+        this.extraEmitters.add(emitter);
+        refreshLightEmitters();
+        return this;
+    }
+
+    private void refreshLightEmitters() {
+        List<LightEmitter> all = new ArrayList<>();
+        if (this.radiusEmitter != null) {
+            all.add(this.radiusEmitter);
+        }
+        all.addAll(this.extraEmitters);
+        this.lightEmitters = Collections.unmodifiableList(all);
     }
 
     /** makes this a multi-tile object covering x * y * z cells: placing fills all of them (anchored at the clicked cell, extending +x/+y/+z), breaking any of them removes the whole object. only light emission comes from the origin cell alone */
@@ -500,11 +534,11 @@ public class Tile {
 
     // Per face: outward normal, directional shade, and the 4 vertices as
     // {cornerX, cornerY, cornerZ, uSelect, vSelect} (corner 0 = min, 1 = max; uv 0 = min, 1 = max).
-    static final int[][]   FACE_NORMALS  = {
+    public static final int[][]   FACE_NORMALS  = {
             {0, -1, 0}, {0, 1, 0}, {0, 0, -1}, {0, 0, 1}, {-1, 0, 0}, {1, 0, 0}
     };
-    static final float[]   FACE_SHADE    = {1.0F, 1.0F, 0.8F, 0.8F, 0.6F, 0.6F};
-    static final int[][][] FACE_VERTICES = {
+    public static final float[]   FACE_SHADE    = {1.0F, 1.0F, 0.8F, 0.8F, 0.6F, 0.6F};
+    public static final int[][][] FACE_VERTICES = {
             // BOTTOM
             {{0, 0, 1, 0, 1}, {0, 0, 0, 0, 0}, {1, 0, 0, 1, 0}, {1, 0, 1, 1, 1}},
             // TOP
@@ -674,7 +708,7 @@ public class Tile {
      *
      * (sx, sy, sz) are the corner's signs along the face's two tangent axes, the normal axis is 0
      */
-    static float cornerBlockLight(Level level, int nx, int ny, int nz, int sx, int sy, int sz) {
+    public static float cornerBlockLight(Level level, int nx, int ny, int nz, int sx, int sy, int sz) {
         float center = level.getBlockLight(nx, ny, nz);
 
         // the cell of a light source itself (the only cells at full strength): averaging it with the dimmer cells around it

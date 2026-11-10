@@ -6,7 +6,7 @@ import com.nikohalfkino.rubydung.interfaces.GameFrame;
 import com.nikohalfkino.rubydung.interfaces.TileIconRenderer;
 import com.nikohalfkino.rubydung.interfaces.widget.Widget;
 import com.nikohalfkino.rubydung.level.Level;
-import com.nikohalfkino.rubydung.level.tiles.BillboardTile;
+import com.nikohalfkino.rubydung.level.tiles.common.BillboardTile;
 import com.nikohalfkino.rubydung.level.tiles.Tile;
 import com.nikohalfkino.rubydung.player.Player;
 import com.nikohalfkino.rubydung.render.CleanEdgeShader;
@@ -142,6 +142,9 @@ public class HandHud extends Widget {
     private float clock;
     private float lightLevel = -1.0F;   // negative until the first frame, which snaps instead of fading
 
+    // carrying a weighted cube: the hand plays the placing swing once and stays on its last frame, reaching out, until the cube is let go of
+    private boolean holdPose;
+
     private Tile shownTile;
     private Tile fromTile;
     private float morph = 1.0F;
@@ -229,6 +232,7 @@ public class HandHud extends Widget {
         }
 
         updateMorph(dt);
+        updateHoldPose();
         advanceAction(dt);
 
         int texture = this.idleTexture;
@@ -255,7 +259,8 @@ public class HandHud extends Widget {
                 reachX = motion[1];
                 reachY = motion[2];
             } else {
-                float curve = (float) Math.sin(progress * Math.PI);
+                // a hand holding a cube stays at the reach of the middle of the swing
+                float curve = (float) Math.sin((this.holdPose ? Math.min(progress, 0.5F) : progress) * Math.PI);
                 reachX = this.current.reachX * curve;
                 reachY = this.current.reachY * curve;
                 tilt = this.current.tiltDegrees * curve;
@@ -412,8 +417,30 @@ public class HandHud extends Widget {
         return out;
     }
 
+    // starts the placing swing when a cube is picked up (after a swing that is running, like the interact swing of the pick-up, has played out) and ends it when the cube is let go of
+    private void updateHoldPose() {
+        boolean holding = this.game.getPlayerInteraction() != null && this.game.getPlayerInteraction().isHoldingCube();
+        if (holding) {
+            if (!this.holdPose && this.current == null) {
+                this.holdPose = true;
+                start(Action.PLACE);
+            }
+        } else if (this.holdPose) {
+            this.holdPose = false;
+            if (this.current == Action.PLACE) {
+                this.current = null;
+            }
+        }
+    }
+
     private void advanceAction(float dt) {
         if (this.current == null) {
+            return;
+        }
+
+        // carrying a cube: the swing plays to its last frame and stays there
+        if (this.holdPose && this.current == Action.PLACE) {
+            this.actionTime = Math.min(this.actionTime + dt, this.current.duration() - 0.0001F);
             return;
         }
 

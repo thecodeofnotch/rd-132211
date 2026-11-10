@@ -15,6 +15,26 @@ public final class RemotePlayer {
     public double drawX, drawY, drawZ;
     public float drawBodyYaw;
 
+    // what they just said, shown in a bubble over their name until bubbleUntilNanos
+    public String bubble;
+    public long bubbleUntilNanos;
+
+    // their voice in the world: made the first time they speak, stopped when they leave
+    public com.nikohalfkino.rubydung.audio.tts.JTalkSpeaker voice;
+
+    /** walking through blocks */
+    public boolean isNoClip() {
+        return (this.flags & Protocol.FLAG_NOCLIP) != 0;
+    }
+
+    /** the body, from the last position the server told us (not the smoothed one: that is what the server checks too) */
+    public com.nikohalfkino.rubydung.phys.AABB boundingBox() {
+        double feet = this.y - com.nikohalfkino.rubydung.player.Player.EYE_HEIGHT;
+        double half = com.nikohalfkino.rubydung.player.PlayerPhysics.HALF_WIDTH;
+        return new com.nikohalfkino.rubydung.phys.AABB(this.x - half, feet, this.z - half,
+                this.x + half, feet + com.nikohalfkino.rubydung.player.PlayerPhysics.HEIGHT, this.z + half);
+    }
+
     public RemotePlayer(int id, String name, double x, double y, double z) {
         this.id = id;
         this.name = name;

@@ -44,16 +44,39 @@ public final class Connection {
     /** whatever the owner wants to hang on the link (the server keeps the player's session here) */
     public volatile Object attachment;
 
+    // the biggest packet this link reads
+    private final int maxFrameBytes;
+
     public Connection(Socket socket, Listener listener, String label) throws IOException {
+        this(socket, listener, label, Protocol.MAX_FRAME_BYTES);
+    }
+
+    public Connection(Socket socket, Listener listener, String label, int maxFrameBytes) throws IOException {
         this.socket = socket;
         this.listener = listener;
         this.label = label;
-        socket.setTcpNoDelay(true);
-        socket.setSoTimeout(Protocol.SOCKET_TIMEOUT_MS);
+        this.maxFrameBytes = maxFrameBytes;
+        try {
+            socket.setTcpNoDelay(true);
+            socket.setSoTimeout(Protocol.SOCKET_TIMEOUT_MS);
+        } catch (IOException | RuntimeException e) {
+            // the socket would otherwise stay open with nobody holding it
+            try {
+                socket.close();
+            } catch (IOException ignored) {
+            }
+            throw e;
+        }
     }
 
     public String getLabel() {
         return this.label;
+    }
+
+    /** the address on the other end ("" if it is not known), used for ip bans */
+    public String remoteIp() {
+        java.net.InetAddress address = this.socket.getInetAddress();
+        return address == null ? "" : address.getHostAddress();
     }
 
     public boolean isClosed() {
@@ -132,7 +155,7 @@ public final class Connection {
         try (DataInputStream in = new DataInputStream(new BufferedInputStream(this.socket.getInputStream(), 1 << 16))) {
             while (!this.closed.get()) {
                 int length = in.readInt();
-                if (length < 1 || length > Protocol.MAX_FRAME_BYTES) {
+                if (length < 1 || length > this.maxFrameBytes) {
                     throw new IOException("bad packet length " + length);
                 }
                 byte[] body = new byte[length];

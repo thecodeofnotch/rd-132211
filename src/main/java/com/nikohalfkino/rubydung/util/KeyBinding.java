@@ -56,7 +56,7 @@ public class KeyBinding {
     // INVENTORY / CHAT are also compared by InventoryScreen / ChatScreen, so the same key closes / is ignored on open
     public static final KeyBinding INVENTORY = new KeyBinding("inventory", "Open Inventory", Keyboard.KEY_TAB, false);
     public static final KeyBinding CHAT = new KeyBinding("chat", "Open Chat", Keyboard.KEY_T, false);
-    public static final KeyBinding CONSOLE = new KeyBinding("console", "Open Console", Keyboard.KEY_GRAVE, false);
+    public static final KeyBinding CONSOLE = new KeyBinding("console", "Open Console", Keyboard.CHAR_NONE, false);
     public static final KeyBinding DEBUG_HUD = new KeyBinding("debug_hud", "Toggle Debug Info", Keyboard.KEY_F3, false);
     public static final KeyBinding SCREENSHOT = new KeyBinding("screenshot", "Screenshot", Keyboard.KEY_F2, false);
     public static final KeyBinding CAMERA_VIEW = new KeyBinding("camera_view", "Change Camera View", Keyboard.KEY_F5, false);

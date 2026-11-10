@@ -85,6 +85,13 @@ public final class ChatImages {
 
     /** the picture for url, starting the download the first time it is asked for */
     public static Entry get(String url) {
+        // nothing is downloaded where the server does not allow embeds, a picture there is just "unavailable"
+        if (!com.nikohalfkino.rubydung.net.Multiplayer.embedsAllowed()) {
+            Entry blocked = new Entry();
+            blocked.state = State.FAILED;
+            return blocked;
+        }
+
         Entry entry = CACHE.get(url);
 
         if (entry == null) {

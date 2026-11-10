@@ -1,7 +1,7 @@
 package com.nikohalfkino.rubydung.console.commands;
 
 import com.nikohalfkino.rubydung.RubyDung;
-import com.nikohalfkino.rubydung.console.Command;
+import com.nikohalfkino.rubydung.console.LocalCommand;
 import com.nikohalfkino.rubydung.console.CommandArg;
 import com.nikohalfkino.rubydung.console.Console;
 import com.nikohalfkino.rubydung.level.generation.LevelGenerator;
@@ -9,7 +9,7 @@ import com.nikohalfkino.rubydung.level.generation.LevelGenerator;
 import java.util.Arrays;
 import java.util.List;
 
-public class RegenerateCommand implements Command {
+public class RegenerateCommand extends LocalCommand {
 
     @Override
     public String name() {
@@ -19,6 +19,11 @@ public class RegenerateCommand implements Command {
     @Override
     public String description() {
         return "Regenerates the map";
+    }
+
+    @Override
+    public Where where() {
+        return Where.OWN_WORLD;
     }
 
     @Override
