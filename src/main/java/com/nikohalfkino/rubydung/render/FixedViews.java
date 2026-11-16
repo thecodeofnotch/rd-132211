@@ -1,6 +1,6 @@
 package com.nikohalfkino.rubydung.render;
 
-import com.nikohalfkino.rubydung.player.Player;
+import com.nikohalfkino.rubydung.entity.player.Player;
 
 import static org.lwjgl.opengl.GL11.glOrtho;
 import static org.lwjgl.opengl.GL11.glRotatef;

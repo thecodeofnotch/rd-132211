@@ -5,7 +5,7 @@ import com.nikohalfkino.rubydung.level.tiles.common.FacingTile;
 import com.nikohalfkino.rubydung.audio.SoundEffects;
 import com.nikohalfkino.rubydung.level.Level;
 import com.nikohalfkino.rubydung.level.tiles.model.BakedQuad;
-import com.nikohalfkino.rubydung.phys.AABB;
+import com.nikohalfkino.rubydung.entity.phys.AABB;
 import com.nikohalfkino.rubydung.render.Tessellator;
 
 import java.util.ArrayList;

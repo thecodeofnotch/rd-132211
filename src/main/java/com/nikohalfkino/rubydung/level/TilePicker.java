@@ -1,8 +1,8 @@
 package com.nikohalfkino.rubydung.level;
 
-import com.nikohalfkino.rubydung.player.HitResult;
+import com.nikohalfkino.rubydung.entity.player.interaction.HitResult;
 import com.nikohalfkino.rubydung.level.tiles.Tile;
-import com.nikohalfkino.rubydung.phys.AABB;
+import com.nikohalfkino.rubydung.entity.phys.AABB;
 
 import java.util.List;
 

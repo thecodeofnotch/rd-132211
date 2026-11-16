@@ -1,7 +1,7 @@
 package com.nikohalfkino.rubydung.net;
 
-import com.nikohalfkino.rubydung.entity.CubeEntity;
 import com.nikohalfkino.rubydung.entity.CubeManager;
+import com.nikohalfkino.rubydung.entity.WorldEntity;
 import com.nikohalfkino.rubydung.level.SubTiles;
 
 import java.io.DataInputStream;
@@ -17,7 +17,7 @@ public final class Protocol {
     }
 
     /** bump when a packet changes, a client with another version is refused */
-    public static final int VERSION = 7;
+    public static final int VERSION = 11;   // 11: S_TIME carries the day count and the pinned sun phase. 10: SOUND_FOOTSTEP shifted the server's sound events
 
     public static final int DEFAULT_PORT = 25566;
 
@@ -44,6 +44,22 @@ public final class Protocol {
     public static final double MAX_REACH = 24.0;
     public static final int MAX_ACTIONS_PER_SECOND = 400;
 
+    /** the events of C_SOUND / S_SOUND */
+    public static final int SOUND_KNOCK = 0;
+    public static final int SOUND_PAT = 1;
+    /** BodySounds events (jump, land, water enter, water tread) are SOUND_BODY + the event */
+    public static final int SOUND_BODY = 2;
+    public static final int SOUND_PICK_UP = 6;    // carrying a cube: picked up (E)
+    public static final int SOUND_PUT_DOWN = 7;   // let go of it (E)
+    public static final int SOUND_THROW = 8;      // thrown (left click)
+    /** a client may send the events below this, the ones from it on only the server makes */
+    public static final int SOUND_FOOTSTEP = 9;   // a step: x y z is the cell under the feet, the material is the receiver's to look up there
+    public static final int SOUND_CLIENT_COUNT = 10;
+    public static final int SOUND_CUBE_HIT = 10;    // a cube hit a player: the sound of the cube, heard by those near it
+    public static final int SOUND_PHYS_IMPACT = 11; // sent only to the player who was hit: the sound of taking it
+    public static final int SOUND_CUBE_BUMP = 12;   // a cube hit a wall, the floor or another cube
+    public static final int SOUND_COUNT = 13;
+
     // client -> server
     public static final int C_HELLO = 1;         // int version, UTF name
     public static final int C_STATE = 2;         // double x y z, float yaw pitch bodyYaw, byte flags
@@ -59,6 +75,7 @@ public final class Protocol {
     public static final int C_CUBE_HOLD = 12;    // int cube id, double x y z where it should be, float w x y z orientation (every few ticks while carrying)
     public static final int C_CUBE_RELEASE = 13; // int cube id, float vx vy vz (blocks/s), float avx avy avz (radians/s): let go or thrown
     public static final int C_CUBE_REMOVE = 14;  // int cube id
+    public static final int C_SOUND = 16;        // byte event (SOUND_*), byte strength (0..255), int x y z: a sound this player made that the others should hear (a knock)
     public static final int C_CHESS_MOVE = 15;   // int piece id, int x z of the square to send it to (the server checks the move)
 
     // server -> client
@@ -72,7 +89,7 @@ public final class Protocol {
     public static final int S_PLAYER_LEAVE = 27; // int id
     public static final int S_PLAYER_MOVES = 28; // int count, then count * (int id, double x y z, float yaw pitch bodyYaw, byte flags)
     public static final int S_CHAT = 29;         // UTF sender (empty = a notice), UTF text, UTF voice profile (empty = not spoken)
-    public static final int S_TIME = 30;         // float time of day, float speed, byte frozen
+    public static final int S_TIME = 30;         // float time of day, float speed, byte frozen, int day count, byte pinned sun phase (-1 = none)
     public static final int S_TELEPORT = 31;     // double x y z, float yaw pitch
     public static final int S_KICK = 32;         // UTF reason
     public static final int S_KEEPALIVE = 33;
@@ -86,6 +103,7 @@ public final class Protocol {
     public static final int S_CUBES = 42;        // byte full (1 = the whole list, cubes not in it are gone), int count, then count * cube (see writeCube). chess pieces are in it too
     public static final int S_CUBE_REMOVE = 43;  // int cube id
     public static final int S_CUBE_DENY = 44;    // int cube id: the server did not let this player carry it, or no longer does
+    public static final int S_SOUND = 45;        // byte event (SOUND_*), byte strength (0..255), int x y z: somebody else made a sound there (sent only to players in range)
     public static final int S_SETTINGS = 38;     // byte flags (WELCOME_*): the owner changed what the server allows
 
     public static final int FLAG_FLYING = 1;
@@ -204,11 +222,11 @@ public final class Protocol {
         public double vx, vy, vz;
         /** id of the player carrying it, HOST_ID for the LAN host, -1 for nobody */
         public int holder;
-        /** -1 for a plain cube, else the chess piece (see CubeEntity.piece) */
+        /** -1 for a plain cube, else the chess piece (see WorldEntity.pieceCode) */
         public int piece = -1;
     }
 
-    public static void writeCube(DataOutputStream out, CubeEntity cube, int holder) throws IOException {
+    public static void writeCube(DataOutputStream out, WorldEntity cube, int holder) throws IOException {
         out.writeInt(cube.id);
         out.writeDouble(cube.x);
         out.writeDouble(cube.y);
@@ -221,7 +239,7 @@ public final class Protocol {
         out.writeFloat((float) cube.vy);
         out.writeFloat((float) cube.vz);
         out.writeInt(holder);
-        out.writeByte(cube.piece);
+        out.writeByte(cube.pieceCode());
     }
 
     public static CubeState readCube(DataInputStream in) throws IOException {

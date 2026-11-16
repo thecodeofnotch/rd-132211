@@ -2,7 +2,7 @@ package com.nikohalfkino.rubydung.level;
 
 import com.nikohalfkino.rubydung.level.tiles.Tile;
 import com.nikohalfkino.rubydung.level.tiles.model.BakedQuad;
-import com.nikohalfkino.rubydung.phys.AABB;
+import com.nikohalfkino.rubydung.entity.phys.AABB;
 
 import java.util.ArrayList;
 import java.util.Collections;

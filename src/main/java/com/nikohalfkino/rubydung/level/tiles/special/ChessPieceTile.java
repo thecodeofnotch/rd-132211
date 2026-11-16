@@ -1,6 +1,6 @@
 package com.nikohalfkino.rubydung.level.tiles.special;
 
-import com.nikohalfkino.rubydung.entity.CubeEntity;
+import com.nikohalfkino.rubydung.entity.piece.ChessPiece;
 import com.nikohalfkino.rubydung.entity.CubeManager;
 import com.nikohalfkino.rubydung.level.Level;
 import com.nikohalfkino.rubydung.level.tiles.Tile;
@@ -13,7 +13,7 @@ import java.util.List;
 
 /**
  * a chess piece. the tile is what the tile selector, the hotbar and the hand show, and what knows where a piece may go: it is never stored in a level.
- * setting it (placing it) stands a piece entity on the square instead (a CubeEntity with piece >= 0, see CubeManager.spawnPiece, Level.setTile),
+ * setting it (placing it) stands a piece entity on the square instead (a ChessPiece, see CubeManager.spawnPiece, Level.setTile),
  * which is a camera facing sprite that glides to the square it is sent to. the methods taking a cell (getMoves, moveTo, at) work on the piece
  * standing on that square
  *
@@ -123,7 +123,7 @@ public class ChessPieceTile extends BillboardTile {
     }
 
     /** the kind of a piece entity, null if it is not one */
-    public static ChessPieceTile of(CubeEntity piece) {
+    public static ChessPieceTile of(ChessPiece piece) {
         if (piece == null || !piece.isPiece()) {
             return null;
         }
@@ -141,7 +141,7 @@ public class ChessPieceTile extends BillboardTile {
      */
     public void moveTo(Level level, int x, int y, int z, int targetX, int targetZ) {
         CubeManager pieces = level.getCubeManager();
-        CubeEntity piece = pieces.pieceAt(x, y, z);
+        ChessPiece piece = pieces.pieceAt(x, y, z);
         if (piece == null) {
             return;
         }
@@ -200,7 +200,7 @@ public class ChessPieceTile extends BillboardTile {
         if (classify(level, x, y, z + forward) == FREE) {
             moves.add(new Move(x, z + forward, false));
 
-            CubeEntity self = level.getCubeManager().pieceAt(x, y, z);
+            ChessPiece self = level.getCubeManager().pieceAt(x, y, z);
             boolean unmoved = self == null || !self.pieceMoved();
             if (unmoved && classify(level, x, y, z + 2 * forward) == FREE) {
                 moves.add(new Move(x, z + 2 * forward, false));

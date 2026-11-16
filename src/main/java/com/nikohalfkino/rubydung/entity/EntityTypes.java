@@ -1,12 +1,14 @@
 package com.nikohalfkino.rubydung.entity;
 
+import com.nikohalfkino.rubydung.entity.cube.Dice;
+import com.nikohalfkino.rubydung.entity.player.PlayerPhysics;
 import com.nikohalfkino.rubydung.level.tiles.special.ChessPieceTile;
 import com.nikohalfkino.rubydung.util.Registry;
 
 /**
  * every kind of entity there is, registered here like the tiles are in TileRegistry. a mod adds its own with register() before freeze()
  *
- * the chess pieces are six types (one per ChessPieceTile.Type), white / black and "has moved" are not types but data, they stay in the bits of CubeEntity.piece, so the save file and the network do not change
+ * the chess pieces are six types (one per ChessPieceTile.Type), white / black and "has moved" are not types but data, they stay in the bits of ChessPiece's piece code, so the save file and the network do not change
  */
 public final class EntityTypes {
 
@@ -24,7 +26,7 @@ public final class EntityTypes {
                     .shape(EntityType.Shape.BOX)
                     .capGroup(GROUP_CUBES, 64));
 
-    /** acts like the weighted cube, but shows a number after a throw (see CubeManager.trackDice). shares the cube cap */
+    /** acts like the weighted cube, but shows a number after a throw (see Dice.trackRoll). shares the cube cap */
     public static final EntityType DICE = register(
             new EntityType("dice")
                     .holdable().throwable().pushable().solidForPlayer().physics()
@@ -46,6 +48,14 @@ public final class EntityTypes {
         }
     }
 
+    /**
+     * the player of this machine (Player). it has no capabilities: it is not held, pushed or picked, and the CubeManager does not hold it. the other players are not entities (see RemotePlayer). saved and sent by its own means, not as an entity
+     */
+    public static final EntityType PLAYER = register(
+            new EntityType("player")
+                    .hull((float) (PlayerPhysics.HALF_WIDTH * 2.0D), (float) PlayerPhysics.HEIGHT)
+                    .localOnly().transientEntity());
+
     /** adds a type. only at start-up: the built-ins are here, mods come after them and before freeze() */
     public static <T extends EntityType> T register(T type) {
         REGISTRY.register(type.name, type);
@@ -66,10 +76,10 @@ public final class EntityTypes {
         return REGISTRY.entries();
     }
 
-    /** the type of a CubeEntity.piece code: a plain cube for a negative one */
+    /** the type of a piece code (see WorldEntity.pieceCode): a plain cube or a dice for a negative one */
     public static EntityType forPieceCode(int code) {
         if (code < 0) {
-            return code <= CubeEntity.DICE_IDLE ? DICE : WEIGHTED_CUBE;
+            return code <= Dice.CODE_IDLE ? DICE : WEIGHTED_CUBE;
         }
         return CHESS[Math.min(code & 7, CHESS.length - 1)];
     }

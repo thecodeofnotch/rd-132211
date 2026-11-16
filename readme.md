@@ -32,3 +32,7 @@ Chat text-to-speech uses [Open JTalk](http://open-jtalk.sourceforge.net/) with t
   [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/).
 
 Full license texts are in `jtalk/common/voice/` inside the game folder.
+
+## Contributors
+
+- **ZLD1**

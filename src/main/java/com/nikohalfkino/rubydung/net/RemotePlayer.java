@@ -28,11 +28,11 @@ public final class RemotePlayer {
     }
 
     /** the body, from the last position the server told us (not the smoothed one: that is what the server checks too) */
-    public com.nikohalfkino.rubydung.phys.AABB boundingBox() {
-        double feet = this.y - com.nikohalfkino.rubydung.player.Player.EYE_HEIGHT;
-        double half = com.nikohalfkino.rubydung.player.PlayerPhysics.HALF_WIDTH;
-        return new com.nikohalfkino.rubydung.phys.AABB(this.x - half, feet, this.z - half,
-                this.x + half, feet + com.nikohalfkino.rubydung.player.PlayerPhysics.HEIGHT, this.z + half);
+    public com.nikohalfkino.rubydung.entity.phys.AABB boundingBox() {
+        double feet = this.y - com.nikohalfkino.rubydung.entity.player.Player.EYE_HEIGHT;
+        double half = com.nikohalfkino.rubydung.entity.player.PlayerPhysics.HALF_WIDTH;
+        return new com.nikohalfkino.rubydung.entity.phys.AABB(this.x - half, feet, this.z - half,
+                this.x + half, feet + com.nikohalfkino.rubydung.entity.player.PlayerPhysics.HEIGHT, this.z + half);
     }
 
     public RemotePlayer(int id, String name, double x, double y, double z) {

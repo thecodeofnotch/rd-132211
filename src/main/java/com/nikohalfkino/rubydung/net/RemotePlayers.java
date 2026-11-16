@@ -6,7 +6,7 @@ import com.nikohalfkino.rubydung.audio.tts.VoiceProfile;
 import com.nikohalfkino.rubydung.level.Level;
 import com.nikohalfkino.rubydung.level.tiles.special.DimensionalDoorTile;
 import com.nikohalfkino.rubydung.level.tiles.Tile;
-import com.nikohalfkino.rubydung.player.Player;
+import com.nikohalfkino.rubydung.entity.player.Player;
 import com.nikohalfkino.rubydung.render.Font;
 import com.nikohalfkino.rubydung.render.NameTags;
 import com.nikohalfkino.rubydung.render.PlayerCamera;

@@ -82,6 +82,7 @@ public final class StaticBillboardShader {
             "#version 120\n" +
                     "uniform sampler2D tex;\n" +
                     "uniform float ambient;\n" +
+                    "uniform vec3 uSunTint;\n" +
                     // pixels with less alpha than this are cut out (0.01 when the sprites are blended, 0.5 when they are opaque cut-outs)
                     "uniform float uCutoff;\n" +
                     "varying vec2 vAuraLocal;\n" +
@@ -158,7 +159,7 @@ public final class StaticBillboardShader {
                     // same light mix as TerrainShader: sky light (r) scaled by the live day/night ambient, block light (g) fills the rest
                     "    float s = vColor.r * ambient;\n" +
                     "    float l = s + (1.0 - s) * vColor.g;\n" +
-                    "    vec3 rgb = c.rgb * l;\n" +
+                    "    vec3 rgb = c.rgb * l * uSunTint;\n" +
                     "    float alpha = vColor.a;\n" +
                     "    if (alpha < 0.9997) {\n" +
                     "        rgb = liquidTint(rgb, alpha, vWorldY);\n" +
@@ -172,6 +173,7 @@ public final class StaticBillboardShader {
     private static int rightLocation = -1;
     private static int reachLocation = -1;
     private static int ambientLocation = -1;
+    private static int sunTintLocation = -1;
     private static int cutoffLocation = -1;
     private static int auraPassLocation = -1;
     private static int fogParamsLocation = -1;
@@ -192,6 +194,7 @@ public final class StaticBillboardShader {
         }
         GL20.glUseProgram(program);
         GL20.glUniform1f(ambientLocation, ambient);
+        WorldTint.upload(sunTintLocation);
         GL20.glUniform1f(cutoffLocation, alphaCutoff);
         GL20.glUniform1f(auraPassLocation, 0.0F);
         Fog.upload(fogParamsLocation, fogColorLocation, fogEyeLocation);
@@ -237,6 +240,7 @@ public final class StaticBillboardShader {
         rightLocation = GL20.glGetUniformLocation(p, "uRight");
         reachLocation = GL20.glGetUniformLocation(p, "uReach");
         ambientLocation = GL20.glGetUniformLocation(p, "ambient");
+        sunTintLocation = GL20.glGetUniformLocation(p, "uSunTint");
         cutoffLocation = GL20.glGetUniformLocation(p, "uCutoff");
         auraPassLocation = GL20.glGetUniformLocation(p, "uAuraPass");
         fogParamsLocation = GL20.glGetUniformLocation(p, "uFogParams");

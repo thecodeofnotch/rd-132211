@@ -7,16 +7,12 @@ public final class CloudTextureGenerator {
 
     private static final float BLOB_STRETCH = 1.15f;
 
-    private static final float TINT_R = 0.5f;
-    private static final float TINT_G = 0.8f;
-    private static final float TINT_B = 1.0f;
-
-    private static final float TINT_STRENGTH = 0.65f;
-
-    private static final float MIN_TINT = 0.08f;
+    // the texture holds no colour: red, green and blue are all the same light level, alpha is the coverage.
+    // CloudShader colours it from the sky (a lit colour for 1.0, a shadow colour for 0.0), so the clouds always match the
+    // sun phase. CORE_SHADE: how much darker the thick core of a cloud is than its thin edge
+    private static final float CORE_SHADE = 0.55f;
 
     private static final int SHADE_LEVELS = 16;
-    private static final int TINT_LEVELS = 16;
 
     private CloudTextureGenerator() {
     }
@@ -24,8 +20,7 @@ public final class CloudTextureGenerator {
     public static BufferedImage generate(int size, long seed) {
         float[][] noise = fractalNoise(size, seed, 5, 0.5f);
 
-        float[][] shadeRaw = new float[size][size];
-        float[][] tintRaw = new float[size][size];
+        float[][] lightRaw = new float[size][size];
         float[][] alpha = new float[size][size];
 
         for (int x = 0; x < size; x++) {
@@ -36,34 +31,20 @@ public final class CloudTextureGenerator {
                 float edgeSoftness = 0.26f;
                 alpha[x][y] = smoothstep(coverage - edgeSoftness, coverage + edgeSoftness, n);
 
-                shadeRaw[x][y] = 0.7f + 0.3f * n;
-
-                float tint = 1.0f - n;
-                tint = tint * tint;
-                tintRaw[x][y] = MIN_TINT + tint * (1.0f - MIN_TINT);
+                // 0 at the thin edge of a cloud, 1 deep inside it: the edge catches the light, the core is in shade
+                float thickness = smoothstep(coverage - edgeSoftness, coverage + 0.30f, n);
+                lightRaw[x][y] = 1.0f - CORE_SHADE * thickness;
             }
         }
 
-        float[][] shadeQuantized = floydSteinbergDither(shadeRaw, SHADE_LEVELS, size);
-        float[][] tintQuantized = floydSteinbergDither(tintRaw, TINT_LEVELS, size);
+        float[][] lightQuantized = floydSteinbergDither(lightRaw, SHADE_LEVELS, size);
 
         BufferedImage image = new BufferedImage(size, size, BufferedImage.TYPE_INT_ARGB);
         for (int x = 0; x < size; x++) {
             for (int y = 0; y < size; y++) {
-                float shade = shadeQuantized[x][y];
-                float tint = tintQuantized[x][y];
-
-                float r = lerp(shade, TINT_R, tint * TINT_STRENGTH);
-                float g = lerp(shade, TINT_G, tint * TINT_STRENGTH);
-                float b = lerp(shade, TINT_B, tint * TINT_STRENGTH);
-
-                int rr = (int) (r * 255);
-                int gg = (int) (g * 255);
-                int bb = (int) (b * 255);
-
+                int l = clamp255((int) (lightQuantized[x][y] * 255));
                 int a = (int) (alpha[x][y] * 255);
-                int argb = (a << 24) | (clamp255(rr) << 16) | (clamp255(gg) << 8) | clamp255(bb);
-                image.setRGB(x, y, argb);
+                image.setRGB(x, y, (a << 24) | (l << 16) | (l << 8) | l);
             }
         }
         return image;

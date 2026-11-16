@@ -1,7 +1,7 @@
 package com.nikohalfkino.rubydung.render;
 
 import com.nikohalfkino.rubydung.level.Level;
-import com.nikohalfkino.rubydung.player.Player;
+import com.nikohalfkino.rubydung.entity.player.Player;
 import com.nikohalfkino.rubydung.util.KeyBinding;
 import com.nikohalfkino.rubydung.util.KeyMap;
 

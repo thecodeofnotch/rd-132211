@@ -3,7 +3,7 @@ package com.nikohalfkino.rubydung.level;
 import com.nikohalfkino.rubydung.level.tiles.common.BillboardTile;
 import com.nikohalfkino.rubydung.level.tiles.special.LiquidTile;
 import com.nikohalfkino.rubydung.level.tiles.Tile;
-import com.nikohalfkino.rubydung.phys.AABB;
+import com.nikohalfkino.rubydung.entity.phys.AABB;
 import com.nikohalfkino.rubydung.render.BillboardMesh;
 import com.nikohalfkino.rubydung.render.Tessellator;
 import com.nikohalfkino.rubydung.render.Textures;

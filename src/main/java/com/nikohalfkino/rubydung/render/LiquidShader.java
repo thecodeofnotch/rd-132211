@@ -61,7 +61,8 @@ public final class LiquidShader {
                     "varying float vOceanFade;\n";
 
     private static final String OCEAN_FRAGMENT_DECLARATIONS =
-            "varying float vOceanFade;\n" +
+            "uniform vec3 uSunTint;\n" +
+                    "varying float vOceanFade;\n" +
                     "void applyOceanFade() {\n" +
                     "    if (vOceanFade >= 1.0) return;\n" +
                     "    vec2 coord = floor(gl_FragCoord.xy);\n" +
@@ -76,6 +77,7 @@ public final class LiquidShader {
     private static int distortionTexture = 0;
     private static int timeLocation = -1;
     private static int ambientLocation = -1;
+    private static int sunTintLocation = -1;
     private static int colorLocation = -1;
     private static int foamLocation = -1;
     private static int motionLocation = -1;
@@ -84,6 +86,11 @@ public final class LiquidShader {
     private static int fogColorLocation = -1;
     private static int fogEyeLocation = -1;
     private static int seaSurfaceLocation = -1;
+    private static int entityBoxLocation = -1;
+    private static int entityInfoLocation = -1;
+    private static int entityCountLocation = -1;
+    private static int wakeLocation = -1;
+    private static int wakeInfoLocation = -1;
 
     // the depth-only program
     private static int depthProgram = 0;
@@ -97,6 +104,11 @@ public final class LiquidShader {
     private static final FloatBuffer SHEETS = BufferUtils.createFloatBuffer(LiquidTile.MAX_LIQUIDS * 4);
 
     private LiquidShader() {}
+
+    /** seconds on the clock the shader's `time` uniform runs on (LiquidEntities stamps its wake with it) */
+    public static float now() {
+        return (System.nanoTime() - START) * 1.0E-9F;
+    }
 
     /** the cheap program for the depth pre-pass: positions and discards only. seaSurface is LiquidLayer.getSurfaceHeight() */
     public static void bindDepth(float seaSurface) {
@@ -115,11 +127,13 @@ public final class LiquidShader {
         }
 
         GL20.glUseProgram(program);
-        GL20.glUniform1f(timeLocation, (System.nanoTime() - START) * 1.0E-9F);
+        GL20.glUniform1f(timeLocation, now());
         GL20.glUniform1f(ambientLocation, ambient);
+        WorldTint.upload(sunTintLocation);
         GL20.glUniform1f(seaSurfaceLocation, seaSurface);
         Fog.upload(fogParamsLocation, fogColorLocation, fogEyeLocation);
         uploadLiquids();
+        LiquidEntities.upload(entityBoxLocation, entityInfoLocation, entityCountLocation, wakeLocation, wakeInfoLocation);
         bindTextures();
     }
 
@@ -200,6 +214,7 @@ public final class LiquidShader {
 
         timeLocation = GL20.glGetUniformLocation(p, "time");
         ambientLocation = GL20.glGetUniformLocation(p, "ambient");
+        sunTintLocation = GL20.glGetUniformLocation(p, "uSunTint");
         colorLocation = GL20.glGetUniformLocation(p, "liqColor");
         foamLocation = GL20.glGetUniformLocation(p, "liqFoam");
         motionLocation = GL20.glGetUniformLocation(p, "liqMotion");
@@ -208,6 +223,11 @@ public final class LiquidShader {
         fogColorLocation = GL20.glGetUniformLocation(p, "uFogColor");
         fogEyeLocation = GL20.glGetUniformLocation(p, "uFogEye");
         seaSurfaceLocation = GL20.glGetUniformLocation(p, "uSeaSurface");
+        entityBoxLocation = GL20.glGetUniformLocation(p, "uEntityBox");
+        entityInfoLocation = GL20.glGetUniformLocation(p, "uEntityInfo");
+        entityCountLocation = GL20.glGetUniformLocation(p, "uEntityCount");
+        wakeLocation = GL20.glGetUniformLocation(p, "uWake");
+        wakeInfoLocation = GL20.glGetUniformLocation(p, "uWakeInfo");
 
         GL20.glUseProgram(p);
         for (int i = 0; i < LiquidTile.MAX_LIQUIDS; i++) {
@@ -301,7 +321,10 @@ public final class LiquidShader {
         if (from >= 0) {
             rest = rest.substring(0, from) + buildSamplers() + rest.substring(from + SAMPLERS_MARKER.length());
         }
-        return version + "\n#define MAX_LIQUIDS " + LiquidTile.MAX_LIQUIDS + "\n" + rest;
+        return version + "\n#define MAX_LIQUIDS " + LiquidTile.MAX_LIQUIDS
+                + "\n#define MAX_ENTITIES " + LiquidEntities.MAX_ENTITIES
+                + "\n#define MAX_WAKES " + LiquidEntities.MAX_WAKES
+                + "\n#define WAKE_LIFE " + LiquidEntities.WAKE_LIFE + "\n" + rest;
     }
 
     private static final java.util.regex.Pattern MAIN = java.util.regex.Pattern.compile("void\\s+main\\s*\\(\\s*(void)?\\s*\\)");
@@ -321,12 +344,12 @@ public final class LiquidShader {
                 : (Fog.GLSL_VERTEX_DECLARATIONS + OCEAN_VERTEX_DECLARATIONS);
         // texcoord unit 1, s = the sea height this column first gets water at (OceanSurface), a huge negative number for everything else
         String main = fragment
-                ? "\nvoid main() {\n    applyDither();\n    applyOceanFade();\n    liquidMain();\n    gl_FragColor.rgb = applyFog(gl_FragColor.rgb);\n}\n"
+                ? "\nvoid main() {\n    applyDither();\n    applyOceanFade();\n    liquidMain();\n    gl_FragColor.rgb = applyFog(gl_FragColor.rgb * uSunTint);\n}\n"
                 : "\nvoid main() {\n    liquidMain();\n    vFogWorldXZ = gl_Vertex.xz;\n"
                 + "    vOceanFade = clamp((uSeaSurface - gl_MultiTexCoord1.s) * " + (1.0F / OCEAN_FADE_DEPTH) + ", 0.0, 1.0);\n}\n";
 
         int afterHeader = 0;
-        for (int i = 0; i < 2; i++) {
+        while (true) {   // the #version line and every #define under it (prepare() adds several)
             int newline = renamed.indexOf('\n', afterHeader);
             if (newline < 0) {
                 break;

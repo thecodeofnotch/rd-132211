@@ -1,11 +1,6 @@
 package com.nikohalfkino.rubydung.render;
 
 import com.nikohalfkino.rubydung.level.DayNightCycle;
-import org.lwjgl.BufferUtils;
-import org.lwjgl.opengl.GL13;
-
-import java.nio.FloatBuffer;
-
 import static org.lwjgl.opengl.GL11.*;
 
 public class CloudRenderer {
@@ -31,14 +26,14 @@ public class CloudRenderer {
 
     private static final float LAYER_GAP = 15.0F;
 
-    // Per-layer base tint and alpha. The day-night cloud colour is multiplied into the tint at draw time.
-    private static final float[] LOWER_TINT = {0.9F, 0.9F, 1.0F};
+    // Per-layer alpha and light bias. The colours come from the sky (DayNightCycle.getCloudColor / getCloudShadowColor, see
+    // CloudShader): the high layer is a little brighter, the low one a little darker, so the two read as two layers.
     private static final float LOWER_ALPHA = 1.0F;
-    private static final float[] UPPER_TINT = {0.3F, 0.6F, 1.0F};
+    private static final float LOWER_BIAS = -0.08F;
     private static final float UPPER_ALPHA = 0.8F;
+    private static final float UPPER_BIAS = 0.12F;
 
     private final Tessellator tessellator = new Tessellator();
-    private final FloatBuffer tintBuffer = BufferUtils.createFloatBuffer(4);
 
     private final long driftStartNanos = System.nanoTime();
 
@@ -101,12 +96,13 @@ public class CloudRenderer {
         float upperShift = (float) ((elapsedMs * DRIFT_TILES_PER_MS) % 1.0);
         float lowerShift = (float) ((elapsedMs * DRIFT_TILES_PER_MS * LOWER_SPEED_FACTOR) % 1.0);
 
-        float[] cloudColor = cycle.getCloudColor();
+        float[] lit = cycle.getCloudColor();
+        float[] shadow = cycle.getCloudShadowColor();
 
         setupRenderState();
         Textures.bind(textureId);
 
-        drawLayer(lowerList, eyeX, eyeY + HEIGHT_OFFSET - LAYER_GAP, eyeZ, LOWER_TINT, cloudColor, lowerShift);
+        drawLayer(lowerList, eyeX, eyeY + HEIGHT_OFFSET - LAYER_GAP, eyeZ, lit, shadow, LOWER_BIAS, lowerShift);
 
         if (betweenLayers != null) {
             // The callback draws with its own GL state, so hand it a clean one and set the cloud state up again afterwards.
@@ -116,20 +112,9 @@ public class CloudRenderer {
             Textures.bind(textureId);
         }
 
-        drawLayer(upperList, eyeX, eyeY + HEIGHT_OFFSET + LAYER_GAP, eyeZ, UPPER_TINT, cloudColor, upperShift);
+        drawLayer(upperList, eyeX, eyeY + HEIGHT_OFFSET + LAYER_GAP, eyeZ, lit, shadow, UPPER_BIAS, upperShift);
 
         cleanupRenderState();
-    }
-
-    // constant colour the texture is multiplied by (layer tint * time-of-day cloud colour)
-    private void setLayerTint(float[] layerTint, float[] cloudColor) {
-        this.tintBuffer.clear();
-        this.tintBuffer.put(layerTint[0] * cloudColor[0])
-                .put(layerTint[1] * cloudColor[1])
-                .put(layerTint[2] * cloudColor[2])
-                .put(1.0F)
-                .flip();
-        glTexEnv(GL_TEXTURE_ENV, GL_TEXTURE_ENV_COLOR, this.tintBuffer);
     }
 
     // Compiles the whole cloud plane (positions, edge-fade alpha, unshifted UVs) once.
@@ -158,8 +143,8 @@ public class CloudRenderer {
     }
 
     // The plane stays centred on the eye (so the edge fade never moves); the drift is a texture-matrix translation.
-    private void drawLayer(int list, double x, double y, double z, float[] layerTint, float[] cloudColor, float shift) {
-        setLayerTint(layerTint, cloudColor);
+    private void drawLayer(int list, double x, double y, double z, float[] lit, float[] shadow, float bias, float shift) {
+        CloudShader.setColors(lit, shadow, bias);
 
         glMatrixMode(GL_TEXTURE);
         glPushMatrix();
@@ -177,7 +162,7 @@ public class CloudRenderer {
     }
 
     private void addVertex(float x, float z, float alpha) {
-        // RGB is white here: the tint is applied at draw time via the texture environment colour.
+        // only the alpha matters here (the edge fade and the layer's alpha), the colour is the shader's
         tessellator.color(1.0F, 1.0F, 1.0F, alpha);
         tessellator.texture(x / UV_SCALE, z / UV_SCALE);
         tessellator.vertex(x, 0, z);
@@ -191,21 +176,11 @@ public class CloudRenderer {
         glDepthMask(false);
         glEnable(GL_TEXTURE_2D);
 
-        // RGB = texture * constant tint colour; alpha = texture alpha * vertex alpha (edge fade).
-        glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL13.GL_COMBINE);
-        glTexEnvi(GL_TEXTURE_ENV, GL13.GL_COMBINE_RGB, GL_MODULATE);
-        glTexEnvi(GL_TEXTURE_ENV, GL13.GL_SOURCE0_RGB, GL_TEXTURE);
-        glTexEnvi(GL_TEXTURE_ENV, GL13.GL_OPERAND0_RGB, GL_SRC_COLOR);
-        glTexEnvi(GL_TEXTURE_ENV, GL13.GL_SOURCE1_RGB, GL13.GL_CONSTANT);
-        glTexEnvi(GL_TEXTURE_ENV, GL13.GL_OPERAND1_RGB, GL_SRC_COLOR);
-        glTexEnvi(GL_TEXTURE_ENV, GL13.GL_COMBINE_ALPHA, GL_MODULATE);
-        glTexEnvi(GL_TEXTURE_ENV, GL13.GL_SOURCE0_ALPHA, GL_TEXTURE);
-        glTexEnvi(GL_TEXTURE_ENV, GL13.GL_OPERAND0_ALPHA, GL_SRC_ALPHA);
-        glTexEnvi(GL_TEXTURE_ENV, GL13.GL_SOURCE1_ALPHA, GL13.GL_PRIMARY_COLOR);
-        glTexEnvi(GL_TEXTURE_ENV, GL13.GL_OPERAND1_ALPHA, GL_SRC_ALPHA);
+        CloudShader.bind();
     }
 
     private void cleanupRenderState() {
+        CloudShader.unbind();
         // Restore the default texture environment for everything drawn after the clouds.
         glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
 

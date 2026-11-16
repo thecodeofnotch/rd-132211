@@ -1,12 +1,15 @@
 package com.nikohalfkino.rubydung.render;
 
-import com.nikohalfkino.rubydung.entity.CubeEntity;
 import com.nikohalfkino.rubydung.entity.CubeManager;
+import com.nikohalfkino.rubydung.entity.WorldEntity;
+import com.nikohalfkino.rubydung.entity.cube.Dice;
+import com.nikohalfkino.rubydung.entity.cube.PhysCube;
+import com.nikohalfkino.rubydung.entity.piece.ChessPiece;
 import com.nikohalfkino.rubydung.level.CameraRay;
 import com.nikohalfkino.rubydung.level.Level;
 import com.nikohalfkino.rubydung.level.UnderwaterTint;
 import com.nikohalfkino.rubydung.level.tiles.special.ChessPieceTile;
-import com.nikohalfkino.rubydung.phys.AABB;
+import com.nikohalfkino.rubydung.entity.phys.AABB;
 import org.lwjgl.BufferUtils;
 import org.lwjgl.opengl.GL20;
 
@@ -41,7 +44,7 @@ public final class CubeRenderer {
             {0, 1, 0}, {0, -1, 0}, {0, 0, -1}, {0, 0, 1}, {-1, 0, 0}, {1, 0, 0}
     };
 
-    // the dice: face index (as in CORNERS) -> the number on it. opposite faces add up to 7, CubeEntity.upFaceValue uses the same
+    // the dice: face index (as in CORNERS) -> the number on it. opposite faces add up to 7, Dice.upFaceValue uses the same
     private static final int[] DICE_FACE_VALUE = {1, 6, 2, 5, 3, 4};
     private static final String DICE_TEXTURE = "/assets/rubydung/textures/block/dice/dice%d.png";
     private final int[] diceTextures = new int[6];
@@ -66,8 +69,8 @@ public final class CubeRenderer {
     private final int[] pieceTextures = new int[ChessPieceTile.Type.values().length * 2];
     private final int[] pieceTranslucent = new int[ChessPieceTile.Type.values().length * 2];
     private final BillboardMesh pieceMesh = new BillboardMesh();
-    private final java.util.List<CubeEntity> cutouts = new java.util.ArrayList<>();
-    private final java.util.List<CubeEntity> blended = new java.util.ArrayList<>();
+    private final java.util.List<ChessPiece> cutouts = new java.util.ArrayList<>();
+    private final java.util.List<ChessPiece> blended = new java.util.ArrayList<>();
 
     /** draws every cube. partialTicks blends the last two ticks */
     public void render(Level level, CubeManager manager, float partialTicks) {
@@ -93,9 +96,9 @@ public final class CubeRenderer {
         glDisable(GL_CULL_FACE);
         glDepthMask(true);
 
-        for (CubeEntity cube : manager.all()) {
-            if (!cube.isPiece()) {
-                draw(level, cube, partialTicks, textured);
+        for (WorldEntity entity : manager.all()) {
+            if (entity instanceof PhysCube) {
+                draw(level, (PhysCube) entity, partialTicks, textured);
             }
         }
 
@@ -103,11 +106,11 @@ public final class CubeRenderer {
         GL20.glUseProgram(program);
     }
 
-    private static int pieceIndex(CubeEntity piece) {
+    private static int pieceIndex(ChessPiece piece) {
         return piece.pieceTypeOrdinal() * 2 + (piece.pieceWhite() ? 1 : 0);
     }
 
-    private int pieceTexture(CubeEntity piece) {
+    private int pieceTexture(ChessPiece piece) {
         int index = pieceIndex(piece);
         if (this.pieceTextures[index] == 0) {
             ChessPieceTile.Type type = ChessPieceTile.Type.values()[piece.pieceTypeOrdinal()];
@@ -135,10 +138,11 @@ public final class CubeRenderer {
         Frustum frustum = Frustum.getFrustum();
         this.cutouts.clear();
         this.blended.clear();
-        for (CubeEntity piece : manager.all()) {
-            if (!piece.isPiece() || pieceTexture(piece) <= 0) {
+        for (WorldEntity entity : manager.all()) {
+            if (!(entity instanceof ChessPiece) || pieceTexture((ChessPiece) entity) <= 0) {
                 continue;
             }
+            ChessPiece piece = (ChessPiece) entity;
             double x = piece.prevX + (piece.x - piece.prevX) * partialTicks;
             double y = piece.prevY + (piece.y - piece.prevY) * partialTicks;
             double z = piece.prevZ + (piece.z - piece.prevZ) * partialTicks;
@@ -171,12 +175,12 @@ public final class CubeRenderer {
             glEnable(GL_BLEND);
             glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-            for (CubeEntity piece : this.cutouts) {
+            for (ChessPiece piece : this.cutouts) {
                 drawPiece(level, piece, partialTicks);
             }
             if (!this.blended.isEmpty()) {
                 StaticBillboardShader.setCutoff(BLENDED_ALPHA);
-                for (CubeEntity piece : this.blended) {
+                for (ChessPiece piece : this.blended) {
                     drawPiece(level, piece, partialTicks);
                 }
             }
@@ -194,7 +198,7 @@ public final class CubeRenderer {
         }
     }
 
-    private static double distanceSq(CubeEntity piece, double eyeX, double eyeY, double eyeZ) {
+    private static double distanceSq(ChessPiece piece, double eyeX, double eyeY, double eyeZ) {
         double dx = piece.x - eyeX;
         double dy = piece.y - eyeY;
         double dz = piece.z - eyeZ;
@@ -202,7 +206,7 @@ public final class CubeRenderer {
     }
 
     // one sprite: the light is the level's at the cell it is over, packed the way a chunk packs it (the shader mixes it with the live ambient)
-    private void drawPiece(Level level, CubeEntity piece, float partialTicks) {
+    private void drawPiece(Level level, ChessPiece piece, float partialTicks) {
         double x = piece.prevX + (piece.x - piece.prevX) * partialTicks;
         double y = piece.prevY + (piece.y - piece.prevY) * partialTicks;
         double z = piece.prevZ + (piece.z - piece.prevZ) * partialTicks;
@@ -220,7 +224,7 @@ public final class CubeRenderer {
         this.pieceMesh.draw();
     }
 
-    private void draw(Level level, CubeEntity cube, float partialTicks, boolean textured) {
+    private void draw(Level level, PhysCube cube, float partialTicks, boolean textured) {
         double x = cube.prevX + (cube.x - cube.prevX) * partialTicks;
         double y = cube.prevY + (cube.y - cube.prevY) * partialTicks;
         double z = cube.prevZ + (cube.z - cube.prevZ) * partialTicks;
@@ -239,10 +243,10 @@ public final class CubeRenderer {
         glPushMatrix();
         glTranslated(x, y, z);
         glMultMatrix(this.matrixBuffer);
-        float s = (float) CubeEntity.HALF;
+        float s = (float) PhysCube.HALF;
         glScalef(s, s, s);
 
-        boolean dice = cube.isDice() && ensureDiceTextures();
+        boolean dice = cube instanceof Dice && ensureDiceTextures();
         boolean uv = dice || textured;
         if (!dice) {
             glBegin(GL_QUADS);
@@ -309,8 +313,8 @@ public final class CubeRenderer {
     public void collectDiceTags(CubeManager manager, float partialTicks, double cameraX, double cameraY, double cameraZ) {
         this.diceTags.clear();
         boolean any = false;
-        for (CubeEntity cube : manager.all()) {
-            if (cube.diceValue() > 0 && !cube.held) {
+        for (WorldEntity entity : manager.all()) {
+            if (entity instanceof Dice && ((Dice) entity).diceValue() > 0 && !((Dice) entity).held) {
                 any = true;
                 break;
             }
@@ -320,8 +324,10 @@ public final class CubeRenderer {
         }
 
         this.diceTags.begin();
-        for (CubeEntity cube : manager.all()) {
-            this.diceTags.addDice(cube, partialTicks, cameraX, cameraY, cameraZ);
+        for (WorldEntity entity : manager.all()) {
+            if (entity instanceof Dice) {
+                this.diceTags.addDice((Dice) entity, partialTicks, cameraX, cameraY, cameraZ);
+            }
         }
     }
 
@@ -342,9 +348,9 @@ public final class CubeRenderer {
     /**
      * the highlight of the cube the crosshair is on: the same pulsing white glow a targeted block gets (see LevelRenderer.renderHit), on all six faces and turned with the cube. fixed-function, no texture
      */
-    public void renderHighlight(CubeEntity cube, float partialTicks) {
-        if (cube.isPiece()) {
-            renderPieceBlink(cube, partialTicks);
+    public void renderHighlight(WorldEntity cube, float partialTicks) {
+        if (cube instanceof ChessPiece) {
+            renderPieceBlink((ChessPiece) cube, partialTicks);
             return;
         }
         double x = cube.prevX + (cube.x - cube.prevX) * partialTicks;
@@ -376,7 +382,7 @@ public final class CubeRenderer {
         glPushMatrix();
         glTranslated(x, y, z);
         glMultMatrix(this.matrixBuffer);
-        float s = (float) CubeEntity.HALF + 0.002F;
+        float s = (float) PhysCube.HALF + 0.002F;
         glScalef(s, s, s);
 
         glBegin(GL_QUADS);
@@ -397,7 +403,7 @@ public final class CubeRenderer {
     /**
      * the highlight of the piece the crosshair is on: what a targeted billboard gets (LevelRenderer.renderBillboardBlink), the sprite drawn again at full brightness, added over itself with the pulsing alpha, in the silhouette of the sprite (not the hitbox). fixed-function
      */
-    private void renderPieceBlink(CubeEntity piece, float partialTicks) {
+    private void renderPieceBlink(ChessPiece piece, float partialTicks) {
         float yaw = CameraRay.yaw();
         int tex = pieceTexture(piece);
         if (Float.isNaN(yaw) || tex <= 0) {

@@ -20,6 +20,17 @@ final class LiquidTinting {
     // bands of a liquid that doesn't set its own palette
     private static final int DEFAULT_BANDS = 6;
 
+    // the look is stepped like the terrain's lighting (TerrainShader.LIGHT_STEPS / LIGHT_SMOOTH): the tint is rounded to TINT_STEPS
+    // levels per channel, with a soft edge between two levels (0 = hard bands, 1 = no flat bands at all). the same softness as the
+    // light, so the two read as one thing. the depth itself is stepped by the caller: TerrainShader reads it at the centre of each
+    // light patch (LIGHT_GRID per block), so the bands fall in the same squares as the light
+    private static final float TINT_STEPS = 15.0F;
+    private static final float TINT_SMOOTH = 0.75F;
+
+    // however deep it gets, a block is never tinted darker than this share of the deepest band's colour at full brightness:
+    // the bottom layer keeps its hue instead of going pitch black (0 = the old behaviour, 1 = no depth darkening at all)
+    private static final float DEEP_FLOOR = 0.22F;
+
     static final String GLSL_DECLARATIONS =
             "uniform float seaHeight;\n" +
                     "uniform float oceanIdx;\n" +
@@ -28,6 +39,16 @@ final class LiquidTinting {
                     "uniform vec3 liqPalette[" + (LiquidTile.MAX_LIQUIDS * LiquidTile.MAX_DEPTH_BANDS) + "];\n" +
                     // how many of those slots each liquid really uses
                     "uniform float liqBands[" + LiquidTile.MAX_LIQUIDS + "];\n" +
+
+                    "const float TINT_LEVELS = " + TINT_STEPS + ";\n" +
+                    "const float TINT_SOFTNESS = " + TINT_SMOOTH + ";\n" +
+                    "const float TINT_DEEP_FLOOR = " + DEEP_FLOOR + ";\n" +
+                    // v rounded to n steps per unit, like TerrainShader's light: soft where it crosses from one step to the next
+                    "float tintStep(float v, float n) {\n" +
+                    "    float w = max(TINT_SOFTNESS, 1.0e-4);\n" +
+                    "    float q = v * n + 0.5 - 0.5 * w;\n" +
+                    "    return (floor(q) + smoothstep(1.0 - w, 1.0, fract(q))) / n;\n" +
+                    "}\n" +
 
                     "vec3 liquidTint(vec3 rgb, float a, float sampleY) {\n" +
                     "    float p = floor(a * 524288.0 + 0.5);\n" +
@@ -80,6 +101,11 @@ final class LiquidTinting {
 
                     "    float visible = max(1.0 - opacity, 0.3);\n" +
                     "    tint = pow(tint, vec3(1.0 / visible));\n" +
+                    // the floor: the hue of this band at full brightness, scaled down. the deepest band alone used to multiply
+                    // the block by 0.025 - 0.3 and then the curve above squared it again, which is black
+                    "    vec3 hue = water / max(max(water.r, water.g), max(water.b, 0.001));\n" +
+                    "    tint = max(tint, hue * TINT_DEEP_FLOOR);\n" +
+                    "    tint = vec3(tintStep(tint.r, TINT_LEVELS), tintStep(tint.g, TINT_LEVELS), tintStep(tint.b, TINT_LEVELS));\n" +
                     "    return rgb * tint;\n" +
                     "}\n";
 

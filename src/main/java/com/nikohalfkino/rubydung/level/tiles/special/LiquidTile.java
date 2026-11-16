@@ -5,7 +5,7 @@ import com.nikohalfkino.rubydung.level.tiles.common.WrappedTile;
 import com.nikohalfkino.rubydung.level.Level;
 import com.nikohalfkino.rubydung.level.LiquidLayer;
 import com.nikohalfkino.rubydung.level.SubTile;
-import com.nikohalfkino.rubydung.phys.AABB;
+import com.nikohalfkino.rubydung.entity.phys.AABB;
 import com.nikohalfkino.rubydung.render.Tessellator;
 import org.lwjgl.BufferUtils;
 import org.lwjgl.opengl.GL11;

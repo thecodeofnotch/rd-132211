@@ -55,6 +55,12 @@ void main() {
     vec4 p = gl_Vertex;
 
     vWorld      = p.xyz;
+    // the ocean's quads are built at y = 0 and lifted to the sea with a glTranslatef (OceanSurface), so gl_Vertex.y is not the world height
+    // there. only the ocean sets texcoord 1 to a real sea height, everything else has OceanSurface.NO_FADE (-1e4). uSeaSurface is declared by
+    // LiquidShader.addFog(). entity foam and wake rings compare against vWorld.y
+    if (gl_MultiTexCoord1.s > -9000.0) {
+        vWorld.y += uSeaSurface;
+    }
     vCell       = gl_MultiTexCoord0.st;
     vLight      = gl_Color.rgb;
     vRectA      = gl_MultiTexCoord2;   // only the ocean surface sets these, everything else leaves them 0

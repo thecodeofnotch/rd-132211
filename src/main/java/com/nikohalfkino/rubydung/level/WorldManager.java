@@ -317,6 +317,8 @@ public final class WorldManager {
             dos.writeFloat(cycle.getSpeed());
             dos.writeBoolean(cycle.isFrozen());
             dos.writeBoolean(cycle.isRealTime());
+            dos.writeInt(cycle.getDayCount());
+            dos.writeByte(cycle.getSunPhaseOverrideIndex());
         } catch (IOException e) {
             e.printStackTrace();
         }
@@ -334,7 +336,14 @@ public final class WorldManager {
             float speed = dis.readFloat();
             boolean frozen = dis.readBoolean();
             boolean realTime = dis.readBoolean();
-            cycle.restoreState(time, speed, frozen, realTime);
+            // saves from before the sun phases end here: day 0, not pinned
+            int dayCount = 0;
+            int phaseOverride = -1;
+            if (dis.available() >= 5) {
+                dayCount = dis.readInt();
+                phaseOverride = dis.readByte();
+            }
+            cycle.restoreState(time, speed, frozen, realTime, dayCount, phaseOverride);
             return true;
         } catch (IOException e) {
             e.printStackTrace();

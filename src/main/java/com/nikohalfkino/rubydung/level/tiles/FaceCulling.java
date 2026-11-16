@@ -3,7 +3,7 @@ package com.nikohalfkino.rubydung.level.tiles;
 import com.nikohalfkino.rubydung.level.Level;
 import com.nikohalfkino.rubydung.level.SubTile;
 import com.nikohalfkino.rubydung.level.SubTiles;
-import com.nikohalfkino.rubydung.phys.AABB;
+import com.nikohalfkino.rubydung.entity.phys.AABB;
 
 import java.util.ArrayList;
 import java.util.Collections;

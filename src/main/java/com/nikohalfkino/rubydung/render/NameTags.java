@@ -1,6 +1,7 @@
 package com.nikohalfkino.rubydung.render;
 
-import com.nikohalfkino.rubydung.entity.CubeEntity;
+import com.nikohalfkino.rubydung.entity.cube.Dice;
+import com.nikohalfkino.rubydung.entity.cube.PhysCube;
 import com.nikohalfkino.rubydung.interfaces.Gui2D;
 import org.lwjgl.BufferUtils;
 import org.lwjgl.util.glu.GLU;
@@ -30,10 +31,10 @@ public final class NameTags {
 
     // the tag is scaled by distance (a tag far away is smaller) but never outside these bounds,
     // so it stays readable in the distance and doesn't fill the screen up close
-    // (a glyph is 8 px at scale 1, the old fixed tag was drawn at scale 2)
+    // (a glyph is 8 px at scale 1)
     public static final float REFERENCE_DISTANCE = 10.0F;
     public static final float BASE_SCALE = 2.0F;
-    public static final float MIN_SCALE = 1.5F;
+    public static final float MIN_SCALE = 2.0F;
     public static final float MAX_SCALE = 3.0F;
 
     // a dice's number floats this far (blocks) above the top of the cube
@@ -134,13 +135,13 @@ public final class NameTags {
      * the number a dice shows, floating over it (position blended between the last two ticks). nothing for a cube that
      * is no dice, has not rolled or is being carried
      */
-    public boolean addDice(CubeEntity dice, float partialTicks, double cameraX, double cameraY, double cameraZ) {
+    public boolean addDice(Dice dice, float partialTicks, double cameraX, double cameraY, double cameraZ) {
         int value = dice.diceValue();
         if (value <= 0 || dice.held) {
             return false;
         }
         double x = dice.prevX + (dice.x - dice.prevX) * partialTicks;
-        double y = dice.prevY + (dice.y - dice.prevY) * partialTicks + CubeEntity.HALF + DICE_TAG_GAP;
+        double y = dice.prevY + (dice.y - dice.prevY) * partialTicks + PhysCube.HALF + DICE_TAG_GAP;
         double z = dice.prevZ + (dice.z - dice.prevZ) * partialTicks;
         return add(x, y, z, cameraX, cameraY, cameraZ, Integer.toString(value), DICE_TAG_COLOR, null, false);
     }

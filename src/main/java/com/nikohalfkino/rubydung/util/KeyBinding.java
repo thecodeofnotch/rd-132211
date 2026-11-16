@@ -29,6 +29,9 @@ public class KeyBinding {
     private static final String[] MOUSE_BUTTON_NAMES = {"Left Click", "Right Click", "Middle Click"};
     private static final String KEYBINDS_FILE_NAME = "keybinds.txt";
 
+    /** "no key assigned". not 0, because LWJGL reports some physical keys (e.g. the ABNT2 "/" key) as KEY_NONE = 0, which would then match this binding */
+    public static final int UNBOUND = -1;
+
     // movement: read via isDown() in Player.tick, so binding one to a mouse button works
     // (unlike the interface group below)
     public static final KeyBinding FORWARD = new KeyBinding("forward", "Move Forward", Keyboard.KEY_W, true);
@@ -50,13 +53,13 @@ public class KeyBinding {
     public static final KeyBinding PLACE_BLOCK = new KeyBinding("place_block", "Place Block", Device.MOUSE, 1, true);
     public static final KeyBinding PICK_BLOCK = new KeyBinding("pick_block", "Pick Block", Keyboard.KEY_LMENU, false);
     public static final KeyBinding INTERACT = new KeyBinding("interact", "Interact", Keyboard.KEY_E, false);
-    public static final KeyBinding KNOCK = new KeyBinding("knock", "Knock", Keyboard.KEY_Q, false);
+    public static final KeyBinding KNOCK = new KeyBinding("knock", "Secondary Interaction", Keyboard.KEY_Q, false);   // knocks on a door, or (a secret) pats another player. the id stays "knock" so saved keybinds.txt files still load
 
     // interface: all compared via getKey() (keyboard only) in InputHandler
     // INVENTORY / CHAT are also compared by InventoryScreen / ChatScreen, so the same key closes / is ignored on open
     public static final KeyBinding INVENTORY = new KeyBinding("inventory", "Open Inventory", Keyboard.KEY_TAB, false);
     public static final KeyBinding CHAT = new KeyBinding("chat", "Open Chat", Keyboard.KEY_T, false);
-    public static final KeyBinding CONSOLE = new KeyBinding("console", "Open Console", Keyboard.CHAR_NONE, false);
+    public static final KeyBinding CONSOLE = new KeyBinding("console", "Open Console", UNBOUND, false);
     public static final KeyBinding DEBUG_HUD = new KeyBinding("debug_hud", "Toggle Debug Info", Keyboard.KEY_F3, false);
     public static final KeyBinding SCREENSHOT = new KeyBinding("screenshot", "Screenshot", Keyboard.KEY_F2, false);
     public static final KeyBinding CAMERA_VIEW = new KeyBinding("camera_view", "Change Camera View", Keyboard.KEY_F5, false);
@@ -224,6 +227,9 @@ public class KeyBinding {
         String[] primaryParts = primaryToken.split(":", 2);
         Device device = Device.valueOf(primaryParts[0]);
         int code = Integer.parseInt(primaryParts[1]);
+        if (device == Device.KEYBOARD && code == Keyboard.KEY_NONE) {
+            code = UNBOUND; // old files stored "unbound" as 0, which the ABNT2 "/" key also reports
+        }
 
         if (device == Device.MOUSE && !this.mouseBindable) {
             throw new IllegalArgumentException("Not mouse-bindable: " + this.id);
@@ -241,6 +247,9 @@ public class KeyBinding {
     }
 
     public boolean isDown() {
+        if (this.code == UNBOUND) {
+            return false;
+        }
         boolean primaryDown = this.device == Device.KEYBOARD ? Keyboard.isKeyDown(this.code) : Mouse.isButtonDown(this.code);
         if (!primaryDown) {
             return false;
@@ -268,6 +277,9 @@ public class KeyBinding {
 
     /** human-readable name for one device+code pair, with friendly names for common modifier keys (raw Keyboard.getKeyName gives "LCONTROL"). shared by getBindingName() and ControlsScreen's "listening for the second half of a combo" prompt */
     public static String describeBinding(Device device, int code) {
+        if (code == UNBOUND) {
+            return "None";
+        }
         if (device == Device.MOUSE) {
             return code < MOUSE_BUTTON_NAMES.length ? MOUSE_BUTTON_NAMES[code] : "Mouse " + (code + 1);
         }
@@ -291,6 +303,9 @@ public class KeyBinding {
 
     /** true if another binding's primary is already this device+code, regardless of modifier. ControlsScreen can warn but still allow it, some players want deliberate overlaps */
     public boolean conflictsWith(Device device, int code) {
+        if (code == UNBOUND) {
+            return false;
+        }
         for (KeyBinding binding : REGISTRY.values()) {
             if (binding != this && binding.device == device && binding.code == code) {
                 return true;
@@ -301,6 +316,9 @@ public class KeyBinding {
 
     /** true if another binding has this exact combo (same modifier or lack of one, same primary). stricter than the other overload: plain "E" and "Ctrl + E" don't conflict */
     public boolean conflictsWith(Device modifierDevice, int modifierCode, Device device, int code) {
+        if (code == UNBOUND) {
+            return false;
+        }
         for (KeyBinding binding : REGISTRY.values()) {
             if (binding == this) {
                 continue;

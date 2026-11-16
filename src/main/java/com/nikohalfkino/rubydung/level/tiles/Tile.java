@@ -1,10 +1,10 @@
 package com.nikohalfkino.rubydung.level.tiles;
 
-import com.nikohalfkino.rubydung.player.HitResult;
+import com.nikohalfkino.rubydung.entity.player.interaction.HitResult;
 import com.nikohalfkino.rubydung.level.Chunk;
 import com.nikohalfkino.rubydung.level.Level;
 import com.nikohalfkino.rubydung.level.UnderwaterTint;
-import com.nikohalfkino.rubydung.phys.AABB;
+import com.nikohalfkino.rubydung.entity.phys.AABB;
 import com.nikohalfkino.rubydung.render.Tessellator;
 import com.nikohalfkino.rubydung.render.Textures;
 

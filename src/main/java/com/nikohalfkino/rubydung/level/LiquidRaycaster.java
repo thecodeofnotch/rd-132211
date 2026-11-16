@@ -1,8 +1,8 @@
 package com.nikohalfkino.rubydung.level;
 
 import com.nikohalfkino.rubydung.level.tiles.special.LiquidTile;
-import com.nikohalfkino.rubydung.phys.AABB;
-import com.nikohalfkino.rubydung.player.HitResult;
+import com.nikohalfkino.rubydung.entity.phys.AABB;
+import com.nikohalfkino.rubydung.entity.player.interaction.HitResult;
 
 /**
  * finds the liquid the crosshair is on, for a player who holds that liquid's tile (so it can be broken, and built against)

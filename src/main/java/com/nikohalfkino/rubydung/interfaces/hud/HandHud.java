@@ -8,7 +8,7 @@ import com.nikohalfkino.rubydung.interfaces.widget.Widget;
 import com.nikohalfkino.rubydung.level.Level;
 import com.nikohalfkino.rubydung.level.tiles.common.BillboardTile;
 import com.nikohalfkino.rubydung.level.tiles.Tile;
-import com.nikohalfkino.rubydung.player.Player;
+import com.nikohalfkino.rubydung.entity.player.Player;
 import com.nikohalfkino.rubydung.render.CleanEdgeShader;
 import com.nikohalfkino.rubydung.render.Font;
 import com.nikohalfkino.rubydung.render.Textures;

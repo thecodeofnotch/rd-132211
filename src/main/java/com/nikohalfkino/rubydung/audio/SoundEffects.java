@@ -147,6 +147,65 @@ public final class SoundEffects {
         trigger(legacy, 1.0F, 1.0F, pitchVariation, RANDOM_PITCH);
     }
 
+    private static final java.util.concurrent.ScheduledExecutorService LATER =
+            Executors.newSingleThreadScheduledExecutor(runnable -> {
+                Thread thread = new Thread(runnable, "SoundEffects-Later");
+                thread.setDaemon(true);
+                return thread;
+            });
+
+    /** plays the sound after a delay (a purr after the pat) */
+    public static void playLater(String name, float volume, long delayMillis) {
+        LATER.schedule(() -> play(name, volume), delayMillis, java.util.concurrent.TimeUnit.MILLISECONDS);
+    }
+
+    /**
+     * a sound that repeats until stop(): a cube dragged over the floor. setVolume() is read by the mixer every block
+     * and eased, so it can follow what is happening without clicks. stop() fades it out
+     */
+    public static final class Loop {
+        volatile float target;
+        volatile boolean stopped;
+
+        public void setVolume(float volume) {
+            this.target = Math.max(0.0F, volume);
+        }
+
+        public void stop() {
+            this.stopped = true;
+        }
+    }
+
+    /** starts a looping sound (the first file of the sound's definition) at the given volume, with its pitch from audio.toml */
+    public static Loop startLoop(String name, float volume) {
+        Loop loop = new Loop();
+        loop.target = Math.max(0.0F, volume);
+        if (mixerFailed) {
+            return loop;
+        }
+
+        Sound sound = find(name);
+        AudioConfig.SoundSpec spec = sound.spec;
+        String file = spec.files[0];
+        float gain = spec.volume;
+        float pitch = spec.pitch;
+        Sample cached = CACHE.get(file);
+        if (cached != null) {
+            startLoopVoice(cached, gain, pitch, loop);
+        } else {
+            ON_DEMAND.execute(() -> startLoopVoice(load(file), gain, pitch, loop));
+        }
+        return loop;
+    }
+
+    private static void startLoopVoice(Sample sample, float gain, float pitch, Loop loop) {
+        if (sample == MISSING || mixerFailed || loop.stopped) {
+            return;
+        }
+        double step = Math.max(0.01D, pitch) * sample.sampleRate / OUT_RATE;
+        INCOMING.offer(new Voice(sample, gain, step, loop));
+    }
+
     /** like playRandom, for a single file */
     public static void playVaried(String name) {
         trigger(find(name), 1.0F, 1.0F, OWN_VARIATION, RANDOM_PITCH);
@@ -160,6 +219,14 @@ public final class SoundEffects {
     public static void playKey(String name, int keyCode) {
         float fraction = (float) ((Math.abs((long) keyCode) * GOLDEN) % 1.0);
         trigger(find(name), 1.0F, 1.0F, OWN_VARIATION, fraction);
+    }
+
+    /** whether a sound can be played: defined in audio.toml or a file of that name is there (a missing one only logs and stays silent) */
+    public static boolean exists(String name) {
+        if (sounds.containsKey(name)) {
+            return true;
+        }
+        return SoundEffects.class.getResource(PATH + legacyFile(name) + ".ogg") != null;
     }
 
     // ---- tile sounds ----
@@ -411,6 +478,12 @@ public final class SoundEffects {
         String resource = PATH + file + ".ogg";
         InputStream raw = SoundEffects.class.getResourceAsStream(resource);
         if (raw == null) {
+            // no .ogg of that name: a .wav is fine too
+            String wav = PATH + file + ".wav";
+            InputStream wavStream = SoundEffects.class.getResourceAsStream(wav);
+            if (wavStream != null) {
+                return decodeWav(wavStream, wav);
+            }
             System.err.println("SoundEffects: missing resource " + resource);
             return MISSING;
         }
@@ -446,6 +519,33 @@ public final class SoundEffects {
             if (decoder != null) {
                 decoder.close();
             }
+        }
+    }
+
+    // a .wav file: whatever the file holds is converted to 16 bit pcm, the same form the ogg decoder gives
+    private static Sample decodeWav(InputStream raw, String resource) {
+        try (javax.sound.sampled.AudioInputStream source = AudioSystem.getAudioInputStream(new BufferedInputStream(raw, 1 << 15))) {
+            AudioFormat in = source.getFormat();
+            int channels = Math.max(1, in.getChannels());
+            AudioFormat pcm = new AudioFormat(AudioFormat.Encoding.PCM_SIGNED, in.getSampleRate(), 16, channels,
+                    channels * 2, in.getSampleRate(), false);
+            try (javax.sound.sampled.AudioInputStream converted = AudioSystem.getAudioInputStream(pcm, source)) {
+                byte[] bytes = converted.readAllBytes();
+                int count = bytes.length / 2;
+                short[] data = new short[count];
+                for (int i = 0; i < count; i++) {
+                    data[i] = (short) ((bytes[i * 2] & 0xFF) | (bytes[i * 2 + 1] << 8));
+                }
+                int frames = count / channels;
+                if (frames == 0) {
+                    System.err.println("SoundEffects: empty sound " + resource);
+                    return MISSING;
+                }
+                return new Sample(data, Math.round(pcm.getSampleRate()), channels, frames);
+            }
+        } catch (Exception e) {
+            System.err.println("SoundEffects: failed to decode " + resource + ": " + e);
+            return MISSING;
         }
     }
 
@@ -519,13 +619,20 @@ public final class SoundEffects {
         final Sample sample;
         final float gain;
         final double step; // source frames per output frame (pitch * rate conversion)
+        final Loop loop;   // null = plays once
         double position;
         boolean fadingOut;
+        float loopGain;    // where the volume of a loop is now, eased toward loop.target
 
         Voice(Sample sample, float gain, double step) {
+            this(sample, gain, step, null);
+        }
+
+        Voice(Sample sample, float gain, double step, Loop loop) {
             this.sample = sample;
             this.gain = gain;
             this.step = step;
+            this.loop = loop;
         }
 
         void startFadeOut() {
@@ -534,6 +641,9 @@ public final class SoundEffects {
 
         /** adds one block into the buffer, true once the sound has finished */
         boolean mixInto(float[] mix) {
+            if (this.loop != null) {
+                return mixLoop(mix);
+            }
             short[] pcm = sample.pcm;
             int channels = sample.channels;
             int last = sample.frames - 1;
@@ -562,6 +672,44 @@ public final class SoundEffects {
 
             this.position = pos;
             return fading || pos > last;
+        }
+
+        // a loop wraps round at the end and eases its volume across the block, it ends once it has faded out after stop()
+        private boolean mixLoop(float[] mix) {
+            short[] pcm = sample.pcm;
+            int channels = sample.channels;
+            int frames = sample.frames;
+            boolean stopping = this.loop.stopped || this.fadingOut;
+            float to = stopping ? 0.0F : this.loop.target;
+            float g = this.loopGain;
+            float gStep = (to - g) / BLOCK_FRAMES;
+            this.loopGain = to;
+            float scale = this.gain / 32768.0F;
+            double pos = this.position;
+
+            for (int n = 0; n < BLOCK_FRAMES; n++, pos += step) {
+                if (pos >= frames) {
+                    pos -= frames;
+                }
+                int i0 = (int) pos;
+                int i1 = i0 + 1 >= frames ? 0 : i0 + 1;
+                float fraction = (float) (pos - i0);
+
+                int a = i0 * channels;
+                int b = i1 * channels;
+                float left = pcm[a] + (pcm[b] - pcm[a]) * fraction;
+                float right = left;
+                if (channels > 1) {
+                    right = pcm[a + 1] + (pcm[b + 1] - pcm[a + 1]) * fraction;
+                }
+
+                g += gStep;
+                mix[n * 2] += left * scale * g;
+                mix[n * 2 + 1] += right * scale * g;
+            }
+
+            this.position = pos;
+            return stopping;
         }
     }
 }

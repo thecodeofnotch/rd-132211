@@ -1,7 +1,10 @@
 package com.nikohalfkino.rubydung.net;
 
-import com.nikohalfkino.rubydung.entity.CubeEntity;
+import com.nikohalfkino.rubydung.audio.BodySounds;
 import com.nikohalfkino.rubydung.entity.CubeManager;
+import com.nikohalfkino.rubydung.entity.WorldEntity;
+import com.nikohalfkino.rubydung.entity.cube.PhysCube;
+import com.nikohalfkino.rubydung.entity.piece.ChessPiece;
 import com.nikohalfkino.rubydung.level.DayNightCycle;
 import com.nikohalfkino.rubydung.level.DoorRegistry;
 import com.nikohalfkino.rubydung.level.Level;
@@ -13,11 +16,12 @@ import com.nikohalfkino.rubydung.level.SubTiles;
 import com.nikohalfkino.rubydung.level.tiles.special.ChessPieceTile;
 import com.nikohalfkino.rubydung.level.tiles.special.DimensionalDoorTile;
 import com.nikohalfkino.rubydung.level.tiles.special.DoorColor;
+import com.nikohalfkino.rubydung.level.tiles.special.WoodenDoorTile;
 import com.nikohalfkino.rubydung.level.tiles.special.LiquidTile;
 import com.nikohalfkino.rubydung.level.tiles.Tile;
-import com.nikohalfkino.rubydung.player.DoorTravel;
-import com.nikohalfkino.rubydung.player.Player;
-import com.nikohalfkino.rubydung.player.PlayerPhysics;
+import com.nikohalfkino.rubydung.entity.player.DoorTravel;
+import com.nikohalfkino.rubydung.entity.player.Player;
+import com.nikohalfkino.rubydung.entity.player.PlayerPhysics;
 
 import java.io.DataInputStream;
 import java.io.IOException;
@@ -41,7 +45,6 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 
 /**
@@ -106,6 +109,7 @@ public final class GameServer implements Connection.Listener {
         long lastStateNanos = 0L;
 
         long actionWindowStart = 0L;
+        final long[] lastSoundNanos = new long[Protocol.SOUND_COUNT];
         int actionsInWindow = 0;
 
         CommandTier tier = CommandTier.PLAYER;
@@ -162,6 +166,10 @@ public final class GameServer implements Connection.Listener {
             level.getCubeManager().setBodyProvider(() -> bodiesOf(this));
             // a thrown dice that has come to rest: "<name> rolled a <n>!" for everybody in this world
             level.getCubeManager().setRollListener((dice, value, holderId) -> diceRolled(this, holderId, value));
+            // a cube that hits a player: the cube is heard by everybody near it, the player hit feels it
+            level.getCubeManager().setImpactListener((x, y, z, bodyId, strength) -> cubeHit(this, x, y, z, bodyId, strength));
+            // a cube that goes into water: everybody in the world near it hears the splash (and the LAN host)
+            level.getCubeManager().setSplashListener((x, y, z, strength) -> cubeSplashed(this, x, y, z, strength));
         }
 
         @Override
@@ -645,6 +653,9 @@ public final class GameServer implements Connection.Listener {
             case Protocol.C_DOOR:
                 onDoor(s, in);
                 break;
+            case Protocol.C_SOUND:
+                onSound(s, in);
+                break;
             case Protocol.C_CUBE_SPAWN:
                 onCubeSpawn(s, in);
                 break;
@@ -1002,7 +1013,11 @@ public final class GameServer implements Connection.Listener {
     // ---------------------------------------------------------------- weighted cubes
     // the server owns them: it moves the loose ones (a dedicated server here, a LAN host's own game with its player) and tells the players what changed. a player carrying one says where it should be, the server pulls it there like it does for a local hold
 
-    private static int holderOf(CubeEntity cube) {
+    private static int holderOf(WorldEntity entity) {
+        if (!(entity instanceof PhysCube)) {
+            return -1;   // a piece is never carried
+        }
+        PhysCube cube = (PhysCube) entity;
         if (cube.heldBy >= 1) {
             return cube.heldBy;
         }
@@ -1018,8 +1033,8 @@ public final class GameServer implements Connection.Listener {
             }
             double feet = s.y - Player.EYE_HEIGHT;
             double half = PlayerPhysics.HALF_WIDTH;
-            list.add(new CubeManager.Body(new com.nikohalfkino.rubydung.phys.AABB(s.x - half, feet, s.z - half,
-                    s.x + half, feet + PlayerPhysics.HEIGHT, s.z + half), s.velX, s.velZ));
+            list.add(new CubeManager.Body(new com.nikohalfkino.rubydung.entity.phys.AABB(s.x - half, feet, s.z - half,
+                    s.x + half, feet + PlayerPhysics.HEIGHT, s.z + half), s.velX, s.velZ).withId(s.id));
         }
         return list;
     }
@@ -1045,8 +1060,8 @@ public final class GameServer implements Connection.Listener {
             return;
         }
 
-        List<CubeEntity> changed = new ArrayList<>();
-        for (CubeEntity cube : cubes.all()) {
+        List<WorldEntity> changed = new ArrayList<>();
+        for (WorldEntity cube : cubes.all()) {
             slot.knownCubes.add(cube.id);
             if (cube.takeDirty(holderOf(cube))) {
                 changed.add(cube);
@@ -1065,7 +1080,7 @@ public final class GameServer implements Connection.Listener {
             sendAll(slot, Connection.frame(Protocol.S_CUBES, out -> {
                 out.writeByte(0);
                 out.writeInt(changed.size());
-                for (CubeEntity cube : changed) {
+                for (WorldEntity cube : changed) {
                     Protocol.writeCube(out, cube, holderOf(cube));
                 }
             }));
@@ -1073,11 +1088,11 @@ public final class GameServer implements Connection.Listener {
     }
 
     private byte[] allCubesFrame(WorldSlot slot) {
-        List<CubeEntity> all = new ArrayList<>(slot.level.getCubeManager().all());
+        List<WorldEntity> all = new ArrayList<>(slot.level.getCubeManager().all());
         return Connection.frame(Protocol.S_CUBES, out -> {
             out.writeByte(1);
             out.writeInt(all.size());
-            for (CubeEntity cube : all) {
+            for (WorldEntity cube : all) {
                 Protocol.writeCube(out, cube, holderOf(cube));
             }
         });
@@ -1087,8 +1102,9 @@ public final class GameServer implements Connection.Listener {
         if (s.slot == null) {
             return;
         }
-        for (CubeEntity cube : s.slot.level.getCubeManager().all()) {
-            if (cube.heldBy == s.id) {
+        for (WorldEntity entity : s.slot.level.getCubeManager().all()) {
+            if (entity instanceof PhysCube && ((PhysCube) entity).heldBy == s.id) {
+                PhysCube cube = (PhysCube) entity;
                 cube.held = false;
                 cube.heldBy = -1;
                 cube.ignoreBodies = true;
@@ -1097,7 +1113,7 @@ public final class GameServer implements Connection.Listener {
         }
     }
 
-    private boolean cubeNear(Session s, CubeEntity cube, double max) {
+    private boolean cubeNear(Session s, WorldEntity cube, double max) {
         if (!s.hasState) {
             return true;
         }
@@ -1112,8 +1128,8 @@ public final class GameServer implements Connection.Listener {
     }
 
     private boolean holdsACube(Session s) {
-        for (CubeEntity cube : s.slot.level.getCubeManager().all()) {
-            if (cube.heldBy == s.id) {
+        for (WorldEntity cube : s.slot.level.getCubeManager().all()) {
+            if (cube instanceof PhysCube && ((PhysCube) cube).heldBy == s.id) {
                 return true;
             }
         }
@@ -1139,8 +1155,8 @@ public final class GameServer implements Connection.Listener {
 
     private void onCubePickup(Session s, DataInputStream in) throws IOException {
         int id = in.readInt();
-        CubeEntity cube = s.slot.level.getCubeManager().byId(id);
-        if (!allowAction(s) || cube == null || cube.isPiece() || cube.held || holdsACube(s)
+        PhysCube cube = s.slot.level.getCubeManager().cubeById(id);
+        if (!allowAction(s) || cube == null || cube.held || holdsACube(s)
                 || !cubeNear(s, cube, Protocol.MAX_CUBE_PICKUP_DISTANCE)) {
             denyCube(s, id);
             return;
@@ -1166,7 +1182,7 @@ public final class GameServer implements Connection.Listener {
         double qy = in.readFloat();
         double qz = in.readFloat();
 
-        CubeEntity cube = s.slot.level.getCubeManager().byId(id);
+        PhysCube cube = s.slot.level.getCubeManager().cubeById(id);
         if (cube == null || cube.heldBy != s.id) {
             denyCube(s, id);
             return;
@@ -1206,7 +1222,7 @@ public final class GameServer implements Connection.Listener {
         double avy = in.readFloat();
         double avz = in.readFloat();
 
-        CubeEntity cube = s.slot.level.getCubeManager().byId(id);
+        PhysCube cube = s.slot.level.getCubeManager().cubeById(id);
         if (cube == null || cube.heldBy != s.id) {
             return;
         }
@@ -1242,8 +1258,8 @@ public final class GameServer implements Connection.Listener {
         int toZ = in.readInt();
 
         Level level = s.slot.level;
-        CubeEntity piece = level.getCubeManager().byId(id);
-        ChessPieceTile tile = ChessPieceTile.of(piece);
+        ChessPiece piece = level.getCubeManager().pieceById(id);
+        ChessPieceTile tile = piece == null ? null : ChessPieceTile.of(piece);
         if (!allowAction(s) || tile == null || piece.gliding || !cubeNear(s, piece, Protocol.MAX_REACH)) {
             return;
         }
@@ -1259,15 +1275,16 @@ public final class GameServer implements Connection.Listener {
     private void onCubeRemove(Session s, DataInputStream in) throws IOException {
         int id = in.readInt();
         CubeManager cubes = s.slot.level.getCubeManager();
-        CubeEntity cube = cubes.byId(id);
-        if (!allowAction(s) || cube == null || cube.held || !cubeNear(s, cube, Protocol.MAX_CUBE_PICKUP_DISTANCE)) {
+        WorldEntity cube = cubes.byId(id);
+        if (!allowAction(s) || cube == null || (cube instanceof PhysCube && ((PhysCube) cube).held)
+                || !cubeNear(s, cube, Protocol.MAX_CUBE_PICKUP_DISTANCE)) {
             return;
         }
-        int tileId = cube.isPiece() ? ChessPieceTile.of(cube).id
+        int tileId = cube instanceof ChessPiece ? ChessPieceTile.of((ChessPiece) cube).id
                 : (cube.isDice() ? com.nikohalfkino.rubydung.level.tiles.TileRegistry.DICE
                 : com.nikohalfkino.rubydung.level.tiles.TileRegistry.WEIGHTED_CUBE).id;
         int cellX = (int) Math.floor(cube.x);
-        int cellY = cube.isPiece() ? cube.pieceCellY() : (int) Math.floor(cube.y);
+        int cellY = cube instanceof ChessPiece ? ((ChessPiece) cube).pieceCellY() : (int) Math.floor(cube.y);
         int cellZ = (int) Math.floor(cube.z);
         cubes.remove(cube);
         if (s.slot == this.mainSlot) {
@@ -1284,9 +1301,9 @@ public final class GameServer implements Connection.Listener {
         if (tile == null) {
             return false;
         }
-        java.util.List<com.nikohalfkino.rubydung.phys.AABB> boxes = tile.getCollisionBoxes(x, y, z, data);
+        java.util.List<com.nikohalfkino.rubydung.entity.phys.AABB> boxes = tile.getCollisionBoxes(x, y, z, data);
         if (boxes.isEmpty() && tile.getAABB(x, y, z) == null) {
-            boxes = java.util.Collections.singletonList(new com.nikohalfkino.rubydung.phys.AABB(x, y, z, x + 1, y + 1, z + 1));
+            boxes = java.util.Collections.singletonList(new com.nikohalfkino.rubydung.entity.phys.AABB(x, y, z, x + 1, y + 1, z + 1));
         }
         if (boxes.isEmpty()) {
             return false;
@@ -1309,12 +1326,12 @@ public final class GameServer implements Connection.Listener {
     }
 
     // eyeX/Y/Z is where a player's state puts them (their eyes), the body is the physics box under it
-    private static boolean overlapsBody(java.util.List<com.nikohalfkino.rubydung.phys.AABB> boxes, double eyeX, double eyeY, double eyeZ) {
+    private static boolean overlapsBody(java.util.List<com.nikohalfkino.rubydung.entity.phys.AABB> boxes, double eyeX, double eyeY, double eyeZ) {
         double feet = eyeY - Player.EYE_HEIGHT;
-        com.nikohalfkino.rubydung.phys.AABB body = new com.nikohalfkino.rubydung.phys.AABB(
+        com.nikohalfkino.rubydung.entity.phys.AABB body = new com.nikohalfkino.rubydung.entity.phys.AABB(
                 eyeX - PlayerPhysics.HALF_WIDTH + BODY_SHRINK, feet + BODY_SHRINK, eyeZ - PlayerPhysics.HALF_WIDTH + BODY_SHRINK,
                 eyeX + PlayerPhysics.HALF_WIDTH - BODY_SHRINK, feet + PlayerPhysics.HEIGHT - BODY_SHRINK, eyeZ + PlayerPhysics.HALF_WIDTH - BODY_SHRINK);
-        for (com.nikohalfkino.rubydung.phys.AABB box : boxes) {
+        for (com.nikohalfkino.rubydung.entity.phys.AABB box : boxes) {
             if (box.intersects(body)) {
                 return true;
             }
@@ -1404,6 +1421,136 @@ public final class GameServer implements Connection.Listener {
         s.tier = this.settings.isOp(s.name) ? CommandTier.OP : CommandTier.PLAYER;
         for (String reply : ServerCommands.execute(this, s, line)) {
             tell(s, reply);
+        }
+    }
+
+    // sounds other players should hear
+
+    /** fewest nanoseconds between two sounds of the same kind from one player, by event (a client can not flood the others) */
+    private static final long[] SOUND_GAP_NANOS = {
+            150_000_000L,   // knock
+            700_000_000L,   // pat
+            100_000_000L,   // jump
+            100_000_000L,   // land
+            150_000_000L,   // water enter
+            250_000_000L,   // water tread
+            150_000_000L,   // cube picked up
+            150_000_000L,   // cube put down
+            200_000_000L,   // cube thrown
+            150_000_000L,   // footstep
+            0L,             // (server only) cube hit
+            0L,             // (server only) hit
+            0L              // (server only) cube bump
+    };
+
+    /** a player says they made a sound (a knock, a pat, a jump...): the players near it (and the LAN host) hear it too */
+    private void onSound(Session s, DataInputStream in) throws IOException {
+        int event = in.readUnsignedByte();
+        float strength = in.readUnsignedByte() / 255.0F;
+        int x = in.readInt();
+        int y = in.readInt();
+        int z = in.readInt();
+
+        if (event >= Protocol.SOUND_CLIENT_COUNT || !allowAction(s) || !inReach(s, x, y, z)) {
+            return;
+        }
+
+        long now = System.nanoTime();
+        if (now - s.lastSoundNanos[event] < SOUND_GAP_NANOS[event]) {
+            return;
+        }
+        s.lastSoundNanos[event] = now;
+
+        if (event == Protocol.SOUND_KNOCK) {
+            Tile tile = Tile.byId(s.slot.level.getTile(x, y, z));
+            boolean closedDoor = (tile instanceof WoodenDoorTile && !((WoodenDoorTile) tile).isOpen())
+                    || (tile instanceof DimensionalDoorTile && !((DimensionalDoorTile) tile).isOpen());
+            if (!closedDoor) {
+                return;
+            }
+        }
+
+        relaySound(s.slot, s, event, strength, x, y, z);
+        if (this.hostPlayer != null && s.slot == this.mainSlot) {
+            RemoteSounds.sound(this.hostPlayer, event, strength, x, y, z);
+        }
+    }
+
+    private void cubeSplashed(WorldSlot slot, double x, double y, double z, float strength) {
+        int cx = (int) Math.floor(x), cy = (int) Math.floor(y), cz = (int) Math.floor(z);
+        int event = Protocol.SOUND_BODY + BodySounds.WATER_ENTER;
+        relaySound(slot, null, event, strength, cx, cy, cz);
+        if (this.hostPlayer != null && slot == this.mainSlot) {
+            RemoteSounds.sound(this.hostPlayer, event, strength, cx, cy, cz);
+        }
+    }
+
+    /** the LAN host made a sound at (x, y, z) */
+    public void hostSound(int event, float strength, int x, int y, int z) {
+        if (this.mainSlot != null && event >= 0 && event < Protocol.SOUND_CLIENT_COUNT) {
+            relaySound(this.mainSlot, null, event, strength, x, y, z);
+        }
+    }
+
+    private static byte[] soundFrame(int event, float strength, int x, int y, int z) {
+        int strengthByte = Math.round(Math.max(0.0F, Math.min(1.0F, strength)) * 255.0F);
+        return Connection.frame(Protocol.S_SOUND, out -> {
+            out.writeByte(event);
+            out.writeByte(strengthByte);
+            out.writeInt(x);
+            out.writeInt(y);
+            out.writeInt(z);
+        });
+    }
+
+    /** a cube hit a player (bodyId = the session's id, -1 = the LAN host, CubeManager.BUMP = not a player): everybody near hears the cube, the one hit hears the impact */
+    private void cubeHit(WorldSlot slot, double x, double y, double z, int bodyId, float strength) {
+        int cx = (int) Math.floor(x), cy = (int) Math.floor(y), cz = (int) Math.floor(z);
+        boolean hostHere = this.hostPlayer != null && slot == this.mainSlot;
+
+        // not a player (a wall, the floor, another cube): everybody near hears the bump, nobody feels it
+        if (bodyId == CubeManager.BUMP) {
+            relaySound(slot, null, Protocol.SOUND_CUBE_BUMP, strength, cx, cy, cz);
+            if (hostHere) {
+                RemoteSounds.sound(this.hostPlayer, Protocol.SOUND_CUBE_BUMP, strength, cx, cy, cz);
+            }
+            return;
+        }
+
+        relaySound(slot, null, Protocol.SOUND_CUBE_HIT, strength, cx, cy, cz);
+        if (hostHere) {
+            RemoteSounds.sound(this.hostPlayer, Protocol.SOUND_CUBE_HIT, strength, cx, cy, cz);
+        }
+
+        if (bodyId == -1) {
+            if (hostHere) {
+                RemoteSounds.sound(this.hostPlayer, Protocol.SOUND_PHYS_IMPACT, strength, cx, cy, cz);
+            }
+        } else {
+            Session hit = this.sessions.get(bodyId);
+            if (hit != null && hit.joined && hit.slot == slot) {
+                hit.connection.sendFrame(soundFrame(Protocol.SOUND_PHYS_IMPACT, strength, cx, cy, cz));
+            }
+        }
+    }
+
+    /** tells the players of a world within hearing distance of (x, y, z) about a sound, all but the one who made it */
+    private void relaySound(WorldSlot slot, Session except, int event, float strength, int x, int y, int z) {
+        byte[] frame = soundFrame(event, strength, x, y, z);
+        double range = RemoteSounds.RANGE;
+        for (Session other : this.sessions.values()) {
+            if (!other.joined || other.slot != slot || other == except) {
+                continue;
+            }
+            if (other.hasState) {
+                double dx = x + 0.5D - other.x;
+                double dy = y + 0.5D - other.y;
+                double dz = z + 0.5D - other.z;
+                if (dx * dx + dy * dy + dz * dz >= range * range) {
+                    continue;
+                }
+            }
+            other.connection.sendFrame(frame);
         }
     }
 
@@ -2059,10 +2206,14 @@ public final class GameServer implements Connection.Listener {
         float time = slot.clock.getTime();
         float speed = slot.clock.getSpeed();
         boolean frozen = slot.clock.isFrozen();
+        int dayCount = slot.clock.getDayCount();
+        int sunPhase = slot.clock.getSunPhaseOverrideIndex();
         return Connection.frame(Protocol.S_TIME, out -> {
             out.writeFloat(time);
             out.writeFloat(speed);
             out.writeBoolean(frozen);
+            out.writeInt(dayCount);
+            out.writeByte(sunPhase);
         });
     }
 

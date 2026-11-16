@@ -81,8 +81,105 @@ place = "tile_place"
 # break = "stone_break"
 # place = "stone_place"
 
+[sounds.player_jump]
+files = ["player/jump"]
+volume = 0.35
+
+[sounds.player_land]
+files = ["player/land"]
+
+[sounds.water_enter]
+files = ["player/water_enter"]
+
+[sounds.water_tread]
+files = ["player/water_tread1", "player/water_tread2"]
+
+[sounds.pat]
+files = ["player/pat1", "player/pat2", "player/pat3"]
+gap_ms = 0
+
+[sounds.purr]
+files = ["player/purr1", "player/purr2", "player/purr3"]
+pitch_variation = 0.04
+gap_ms = 0
+
+[sounds.phys_pick_up]
+files = ["player/phys_pick_up"]
+
+[sounds.phys_put_down]
+files = ["player/phys_put_down"]
+
+[sounds.phys_throw]
+files = ["player/phys_throw"]
+
+[sounds.phys_impact_player]
+files = ["player/phys_impact_player"]
+pitch_variation = 0.06
+
+[sounds.cube_impact_player]
+files = ["player/cube_impact_player", "player/cube_impact_player2"]
+
+[sounds.cube_bump]
+files = ["player/cube_impact_player", "player/cube_impact_player2"]
+volume = 0.35
+pitch_min = 0.65
+pitch_max = 0.85
+
+[sounds.cube_drag_floor_loop]
+files = ["player/cube_drag_floor_loop"]
+pitch_variation = 0.0
+gap_ms = 0
+
 [sounds.key_press]
 files = ["ui/keypress"]
 pitch_min = 0.8
 pitch_max = 1.4
+gap_ms = 0
+
+[sounds.step_concrete]
+files = ["player/footstep/concrete1", "player/footstep/concrete2", "player/footstep/concrete3", "player/footstep/concrete4"]
+volume = 0.25
+pitch_variation = 0.06
+gap_ms = 0
+
+[sounds.step_dirt]
+files = ["player/footstep/dirt1", "player/footstep/dirt2", "player/footstep/dirt3", "player/footstep/dirt4"]
+volume = 0.25
+pitch_variation = 0.06
+gap_ms = 0
+
+[sounds.step_grass]
+files = ["player/footstep/grass1", "player/footstep/grass2", "player/footstep/grass3", "player/footstep/grass4"]
+volume = 0.25
+pitch_variation = 0.06
+gap_ms = 0
+
+[sounds.step_gravel]
+files = ["player/footstep/gravel1", "player/footstep/gravel2", "player/footstep/gravel3", "player/footstep/gravel4"]
+volume = 0.25
+pitch_variation = 0.06
+gap_ms = 0
+
+[sounds.step_metal]
+files = ["player/footstep/metal1", "player/footstep/metal2", "player/footstep/metal3", "player/footstep/metal4"]
+volume = 0.25
+pitch_variation = 0.06
+gap_ms = 0
+
+[sounds.step_sand]
+files = ["player/footstep/sand1", "player/footstep/sand2", "player/footstep/sand3", "player/footstep/sand4"]
+volume = 0.25
+pitch_variation = 0.06
+gap_ms = 0
+
+[sounds.step_tile]
+files = ["player/footstep/tile1", "player/footstep/tile2", "player/footstep/tile3"]
+volume = 0.25
+pitch_variation = 0.06
+gap_ms = 0
+
+[sounds.step_wood]
+files = ["player/footstep/wood1", "player/footstep/wood2", "player/footstep/wood3", "player/footstep/wood4"]
+volume = 0.25
+pitch_variation = 0.06
 gap_ms = 0

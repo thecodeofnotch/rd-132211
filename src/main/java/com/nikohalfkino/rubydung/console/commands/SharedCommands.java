@@ -15,6 +15,7 @@ public final class SharedCommands {
         return Arrays.<Command>asList(
                 new HelpCommand(),
                 new TimeCommand(),
+                new SunCommand(),
                 new SeaCommand(),
                 new SeedCommand(),
                 new LiquidCommand(),

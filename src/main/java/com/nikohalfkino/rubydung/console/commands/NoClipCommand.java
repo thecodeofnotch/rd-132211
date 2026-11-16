@@ -3,7 +3,7 @@ package com.nikohalfkino.rubydung.console.commands;
 import com.nikohalfkino.rubydung.RubyDung;
 import com.nikohalfkino.rubydung.console.LocalCommand;
 import com.nikohalfkino.rubydung.console.Console;
-import com.nikohalfkino.rubydung.player.Player;
+import com.nikohalfkino.rubydung.entity.player.Player;
 
 public class NoClipCommand extends LocalCommand {
 

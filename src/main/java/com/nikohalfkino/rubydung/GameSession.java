@@ -12,8 +12,8 @@ import com.nikohalfkino.rubydung.net.Multiplayer;
 import com.nikohalfkino.rubydung.level.generation.LevelGenerator;
 import com.nikohalfkino.rubydung.level.generation.WorldGenStatus;
 import com.nikohalfkino.rubydung.util.SaveQueue;
-import com.nikohalfkino.rubydung.player.Player;
-import com.nikohalfkino.rubydung.player.PlayerInteraction;
+import com.nikohalfkino.rubydung.entity.player.Player;
+import com.nikohalfkino.rubydung.entity.player.interaction.PlayerInteraction;
 
 import java.util.Random;
 

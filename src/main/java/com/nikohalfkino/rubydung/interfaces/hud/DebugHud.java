@@ -3,7 +3,7 @@ package com.nikohalfkino.rubydung.interfaces.hud;
 import com.nikohalfkino.rubydung.RubyDung;
 import com.nikohalfkino.rubydung.interfaces.widget.Anchor;
 import com.nikohalfkino.rubydung.interfaces.widget.Widget;
-import com.nikohalfkino.rubydung.player.Player;
+import com.nikohalfkino.rubydung.entity.player.Player;
 import com.nikohalfkino.rubydung.render.Font;
 import com.nikohalfkino.rubydung.util.GameSettings;
 

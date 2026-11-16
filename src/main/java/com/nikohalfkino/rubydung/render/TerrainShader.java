@@ -39,6 +39,7 @@ public final class TerrainShader {
             "#version 120\n" +
                     "uniform sampler2D tex;\n" +
                     "uniform float ambient;\n" +
+                    "uniform vec3 uSunTint;\n" +
                     "varying vec4 vColor;\n" +
                     "varying vec3 vWorldPos;\n" +
                     LiquidTinting.GLSL_DECLARATIONS +
@@ -73,7 +74,9 @@ public final class TerrainShader {
                     // is two triangles with different colour planes, but a patch's centre is always on the shared diagonal or wholly
                     // inside one triangle, so every pixel of a patch agrees on it. (Reading the patches around it from this pixel's
                     // plane does not agree between the two triangles, and showed up as harsh triangles along dark edges.)
-                    "float faceLight() {\n" +
+                    // patchY (out) = the height of the centre of the patch: the depth tint under the sea is read there, so it changes in the same
+                    // half-block squares the light does, not once per cell
+                    "float faceLight(out float patchY) {\n" +
                     "    vec3 p = vWorldPos;\n" +
                     // all derivatives first, so they run in uniform control flow
                     "    vec3 dpx = dFdx(p);\n" +
@@ -102,13 +105,15 @@ public final class TerrainShader {
                     "        M = mat3(av.x * dcx + bv.x * dcy, av.y * dcx + bv.y * dcy, av.z * dcx + bv.z * dcy);\n" +
                     "    }\n" +
 
+                    "    patchY = c0.y;\n" +
                     "    vec2 v = patchLight(c0, p, M);\n" +
                     "    return v.x * v.y;\n" +
                     "}\n" +
 
                     "void main() {\n" +
                     // before applyDither, which can discard (derivatives need every pixel of the 2x2 block)
-                    "    float light = faceLight();\n" +
+                    "    float patchY;\n" +
+                    "    float light = faceLight(patchY);\n" +
                     "    applyDither();\n" +
                     "    vec4 c = texture2D(tex, gl_TexCoord[0].st);\n" +
                     // a fully see-through texel draws nothing and writes no depth: the liquids are drawn after the terrain, and
@@ -116,11 +121,12 @@ public final class TerrainShader {
                     "    if (c.a < 0.02) {\n" +
                     "        discard;\n" +
                     "    }\n" +
-                    "    vec3 rgb = c.rgb * light;\n" +
+                    "    vec3 rgb = c.rgb * light * uSunTint;\n" +
 
-                    // terrain faces are tinted by the depth of the cell they were packed for (alpha is not snapped)
+                    // terrain faces are tinted by how deep their patch is (the cell they were packed for says which liquid and whether it is wet).
+                    // alpha is not snapped
                     "    if (vColor.a < 0.9997) {\n" +
-                    "        rgb = liquidTint(rgb, vColor.a, -1000.0);\n" +
+                    "        rgb = liquidTint(rgb, vColor.a, patchY);\n" +
                     "    }\n" +
 
                     "    gl_FragColor = vec4(applyFog(rgb), c.a);\n" +
@@ -128,6 +134,7 @@ public final class TerrainShader {
 
     private static int program = 0;
     private static int ambientLocation = -1;
+    private static int sunTintLocation = -1;
     private static int fogParamsLocation = -1;
     private static int fogColorLocation = -1;
     private static int fogEyeLocation = -1;
@@ -148,6 +155,7 @@ public final class TerrainShader {
 
         GL20.glUseProgram(program);
         GL20.glUniform1f(ambientLocation, ambient);
+        WorldTint.upload(sunTintLocation);
         Fog.upload(fogParamsLocation, fogColorLocation, fogEyeLocation);
         tinting.upload();
     }
@@ -177,6 +185,7 @@ public final class TerrainShader {
         GL20.glUseProgram(0);
 
         ambientLocation = GL20.glGetUniformLocation(p, "ambient");
+        sunTintLocation = GL20.glGetUniformLocation(p, "uSunTint");
         fogParamsLocation = GL20.glGetUniformLocation(p, "uFogParams");
         fogColorLocation = GL20.glGetUniformLocation(p, "uFogColor");
         fogEyeLocation = GL20.glGetUniformLocation(p, "uFogEye");

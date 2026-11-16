@@ -2,8 +2,8 @@ package com.nikohalfkino.rubydung.render;
 
 import com.nikohalfkino.rubydung.level.Chunk;
 import com.nikohalfkino.rubydung.level.Level;
-import com.nikohalfkino.rubydung.player.Player;
-import com.nikohalfkino.rubydung.player.PlayerPhysics;
+import com.nikohalfkino.rubydung.entity.player.Player;
+import com.nikohalfkino.rubydung.entity.player.PlayerPhysics;
 
 import static org.lwjgl.opengl.GL11.*;
 

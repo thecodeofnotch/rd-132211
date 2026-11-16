@@ -1,6 +1,6 @@
 package com.nikohalfkino.rubydung.render;
 
-import com.nikohalfkino.rubydung.phys.AABB;
+import com.nikohalfkino.rubydung.entity.phys.AABB;
 import org.lwjgl.BufferUtils;
 
 import java.nio.FloatBuffer;

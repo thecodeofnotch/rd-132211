@@ -4,7 +4,7 @@ import com.nikohalfkino.rubydung.RubyDung;
 import com.nikohalfkino.rubydung.level.DayNightCycle;
 import com.nikohalfkino.rubydung.level.Level;
 import com.nikohalfkino.rubydung.net.CommandTier;
-import com.nikohalfkino.rubydung.player.Player;
+import com.nikohalfkino.rubydung.entity.player.Player;
 
 /** a command run by the game itself, on the world it has loaded: single player, or the LOCAL commands of any game */
 final class LocalContext implements CommandContext {

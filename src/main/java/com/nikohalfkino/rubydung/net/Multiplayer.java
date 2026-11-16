@@ -7,7 +7,7 @@ import com.nikohalfkino.rubydung.interfaces.screen.JoinServerScreen;
 import com.nikohalfkino.rubydung.audio.tts.JTalkSettings;
 import com.nikohalfkino.rubydung.audio.tts.VoiceProfile;
 import com.nikohalfkino.rubydung.level.Level;
-import com.nikohalfkino.rubydung.player.Player;
+import com.nikohalfkino.rubydung.entity.player.Player;
 import com.nikohalfkino.rubydung.render.Font;
 import com.nikohalfkino.rubydung.render.PlayerCamera;
 import com.nikohalfkino.rubydung.render.PlayerRenderer;
@@ -128,6 +128,30 @@ public final class Multiplayer {
         }
     }
 
+    /**
+     * this player made a sound at (x, y, z) (Protocol.SOUND_*, strength 0..1): the others near it hear it (joined: via
+     * the server, hosting: the host tells them). does nothing alone
+     */
+    public static void sound(int event, float strength, int x, int y, int z) {
+        if (client != null) {
+            client.sendSound(event, strength, x, y, z);
+        } else if (isHosting()) {
+            server.hostSound(event, strength, x, y, z);
+        }
+    }
+
+    /** one of this player's jump / land / water sounds (BodySounds events) at their feet */
+    public static void bodySound(int bodyEvent, float strength, Player player) {
+        sound(Protocol.SOUND_BODY + bodyEvent, strength, (int) Math.floor(player.x),
+                (int) Math.floor(player.y - Player.EYE_HEIGHT + 0.1D), (int) Math.floor(player.z));
+    }
+
+    /** this player took a step: the others near them hear it, in the material of the block under the feet (they look it up themselves) */
+    public static void footstep(Player player, float strength) {
+        sound(Protocol.SOUND_FOOTSTEP, strength, (int) Math.floor(player.x),
+                (int) Math.floor(player.y - Player.EYE_HEIGHT - 0.1D), (int) Math.floor(player.z));
+    }
+
     // weighted cubes: alone and on a LAN host the game changes them itself (a host's server tells the others), on a server they are asked of it
 
     /** asks the server to put a cube into the cell (only when joined, a host's own game does it itself) */
@@ -137,33 +161,33 @@ public final class Multiplayer {
         }
     }
 
-    public static void cubePickup(com.nikohalfkino.rubydung.entity.CubeEntity cube) {
+    public static void cubePickup(com.nikohalfkino.rubydung.entity.cube.PhysCube cube) {
         if (client != null) {
             client.sendCubePickup(cube.id);
         }
     }
 
     /** says where the carried cube should be, called every few ticks while carrying */
-    public static void cubeHold(com.nikohalfkino.rubydung.entity.CubeEntity cube) {
+    public static void cubeHold(com.nikohalfkino.rubydung.entity.cube.PhysCube cube) {
         if (client != null) {
             client.sendCubeHold(cube);
         }
     }
 
-    public static void cubeRelease(com.nikohalfkino.rubydung.entity.CubeEntity cube) {
+    public static void cubeRelease(com.nikohalfkino.rubydung.entity.cube.PhysCube cube) {
         if (client != null) {
             client.sendCubeRelease(cube);
         }
     }
 
     /** asks the server to send the chess piece to the square (only when joined, see ChessPieceTile.moveTo) */
-    public static void chessMove(com.nikohalfkino.rubydung.entity.CubeEntity piece, int x, int z) {
+    public static void chessMove(com.nikohalfkino.rubydung.entity.piece.ChessPiece piece, int x, int z) {
         if (client != null) {
             client.sendChessMove(piece.id, x, z);
         }
     }
 
-    public static void cubeRemove(com.nikohalfkino.rubydung.entity.CubeEntity cube) {
+    public static void cubeRemove(com.nikohalfkino.rubydung.entity.WorldEntity cube) {
         if (client != null) {
             client.sendCubeRemove(cube.id);
         }

@@ -4,7 +4,7 @@ import com.nikohalfkino.rubydung.RubyDung;
 import com.nikohalfkino.rubydung.console.LocalCommand;
 import com.nikohalfkino.rubydung.console.CommandArg;
 import com.nikohalfkino.rubydung.console.Console;
-import com.nikohalfkino.rubydung.player.PlayerPhysics;
+import com.nikohalfkino.rubydung.entity.player.PlayerPhysics;
 import com.nikohalfkino.rubydung.render.DebugRenderer;
 
 import java.util.Arrays;

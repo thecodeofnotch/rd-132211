@@ -146,9 +146,9 @@ public final class TileRegistry {
     public static final Tile LAVA = register(
             new LiquidTile("lava")
                     .setColor(1.00F, 0.38F, 0.05F, 1.0F)
-                    .setFoam(0.12F, 0.03F, 0.01F, 1.0F)
-                    .setWarp(0.20F)
-                    .setFlowSpeed(0.35F)
+                    .setFoam(1.00F, 0.58F, 0.08F, 1.0F)   // bright orange: the rim, the wake and the foam waves of a big lake
+                    .setWarp(0.15F)         // water's is 0.125: the same kind of rolling turbulence, a touch heavier
+                    .setFlowSpeed(0.7F)     // was 0.35, which only crawled. water is 1.0
                     .setWaveHeight(0.012F)
                     .setViscosity(4.0F)
                     // 5 bands: glowing orange just under the surface, dark red deep down

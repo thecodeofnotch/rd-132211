@@ -7,7 +7,7 @@ import com.nikohalfkino.rubydung.level.tiles.Tile;
 import com.nikohalfkino.rubydung.level.generation.LevelGenerator;
 import com.nikohalfkino.rubydung.level.generation.WorldGenStatus;
 import com.nikohalfkino.rubydung.entity.CubeManager;
-import com.nikohalfkino.rubydung.phys.AABB;
+import com.nikohalfkino.rubydung.entity.phys.AABB;
 import com.nikohalfkino.rubydung.util.SaveQueue;
 
 import java.io.File;

@@ -10,7 +10,7 @@ import com.nikohalfkino.rubydung.level.tiles.model.BakedQuad;
 import com.nikohalfkino.rubydung.level.tiles.model.BlockStateDef;
 import com.nikohalfkino.rubydung.level.tiles.model.BlockStateLoader;
 import com.nikohalfkino.rubydung.level.tiles.model.ModelSource;
-import com.nikohalfkino.rubydung.phys.AABB;
+import com.nikohalfkino.rubydung.entity.phys.AABB;
 import com.nikohalfkino.rubydung.render.Tessellator;
 import com.nikohalfkino.rubydung.render.Textures;
 

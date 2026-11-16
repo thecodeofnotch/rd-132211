@@ -3,10 +3,10 @@ package com.nikohalfkino.rubydung.render;
 import com.nikohalfkino.rubydung.level.Chunk;
 import com.nikohalfkino.rubydung.net.Multiplayer;
 import com.nikohalfkino.rubydung.level.DayNightCycle;
-import com.nikohalfkino.rubydung.entity.CubeEntity;
+import com.nikohalfkino.rubydung.entity.piece.ChessPiece;
 import com.nikohalfkino.rubydung.entity.CubeManager;
-import com.nikohalfkino.rubydung.player.CubeHold;
-import com.nikohalfkino.rubydung.player.HitResult;
+import com.nikohalfkino.rubydung.entity.player.hold.CubeHold;
+import com.nikohalfkino.rubydung.entity.player.interaction.HitResult;
 import com.nikohalfkino.rubydung.RubyDung;
 import com.nikohalfkino.rubydung.interfaces.FrameScreen;
 import com.nikohalfkino.rubydung.interfaces.GameFrame;
@@ -19,8 +19,8 @@ import com.nikohalfkino.rubydung.level.LiquidRaycaster;
 import com.nikohalfkino.rubydung.level.tiles.special.LiquidTile;
 import com.nikohalfkino.rubydung.level.tiles.Tile;
 import com.nikohalfkino.rubydung.level.VoxelRaycaster;
-import com.nikohalfkino.rubydung.player.Player;
-import com.nikohalfkino.rubydung.player.PlayerInteraction;
+import com.nikohalfkino.rubydung.entity.player.Player;
+import com.nikohalfkino.rubydung.entity.player.interaction.PlayerInteraction;
 import com.nikohalfkino.rubydung.util.GameSettings;
 import org.lwjgl.BufferUtils;
 import org.lwjgl.input.Mouse;
@@ -29,7 +29,6 @@ import org.lwjgl.opengl.Display;
 import java.nio.FloatBuffer;
 
 import static org.lwjgl.opengl.GL11.*;
-import static org.lwjgl.util.glu.GLU.gluPerspective;
 
 public class GameRenderer {
 
@@ -168,6 +167,7 @@ public class GameRenderer {
 
             // Ambient is applied to terrain by TerrainShader at draw time (and to billboards per frame).
             this.game.getLevel().setSkyAmbient(cycle.getAmbient());
+            WorldTint.set(cycle.getWorldTint());
 
             // Liquids flow in real time, except while a screen (pause menu, inventory) is open.
             long now = System.nanoTime();
@@ -352,6 +352,10 @@ public class GameRenderer {
 
         // last: the liquids blend over everything already drawn, billboards and the player included, so what is
         // under the water is seen through it and what is above it isn't covered by the water's depth
+        // what stands and moves in the liquid: the shader gives it a foam rim and a wake. once per frame, so not for a screenshot
+        if (live) {
+            LiquidEntities.update(level, player, cubes, partialTicks, eyeX, eyeZ);
+        }
         levelRenderer.renderLiquids();
         lap("liquids");
 
@@ -368,7 +372,7 @@ public class GameRenderer {
             CubeHold cubeHold = this.game.getPlayerInteraction().getCubeHold();
             HitResult hitResult = this.game.getPlayerInteraction().getHitResult();
             if (!cubeHold.isHolding()) {
-                CubeEntity targetedPiece = cubes.getTargetedPiece();
+                ChessPiece targetedPiece = cubes.getTargetedPiece();
                 if (cubeHold.getTargeted() != null) {
                     this.cubeRenderer.renderHighlight(cubeHold.getTargeted(), partialTicks);
                 } else if (targetedPiece != null) {

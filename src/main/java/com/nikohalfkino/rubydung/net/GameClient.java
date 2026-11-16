@@ -1,8 +1,9 @@
 package com.nikohalfkino.rubydung.net;
 
 import com.nikohalfkino.rubydung.RubyDung;
-import com.nikohalfkino.rubydung.entity.CubeEntity;
 import com.nikohalfkino.rubydung.entity.CubeManager;
+import com.nikohalfkino.rubydung.entity.WorldEntity;
+import com.nikohalfkino.rubydung.entity.cube.PhysCube;
 import com.nikohalfkino.rubydung.level.Level;
 import com.nikohalfkino.rubydung.level.LevelEditListener;
 import com.nikohalfkino.rubydung.level.NetworkSnapshot;
@@ -11,7 +12,7 @@ import com.nikohalfkino.rubydung.level.generation.LevelGenerator;
 import com.nikohalfkino.rubydung.level.LiquidLayer;
 import com.nikohalfkino.rubydung.level.generation.WorldGenStatus;
 import com.nikohalfkino.rubydung.level.tiles.special.DoorColor;
-import com.nikohalfkino.rubydung.player.Player;
+import com.nikohalfkino.rubydung.entity.player.Player;
 
 import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
@@ -275,6 +276,20 @@ public final class GameClient implements Connection.Listener, LevelEditListener 
         }
     }
 
+    /** tells the server about a sound this player made at (x, y, z) (a knock, a pat, a jump...), it passes it on to the players near it */
+    public void sendSound(int event, float strength, int x, int y, int z) {
+        int strengthByte = Math.round(Math.max(0.0F, Math.min(1.0F, strength)) * 255.0F);
+        if (this.connection != null && this.state == State.PLAYING) {
+            this.connection.send(Protocol.C_SOUND, out -> {
+                out.writeByte(event);
+                out.writeByte(strengthByte);
+                out.writeInt(x);
+                out.writeInt(y);
+                out.writeInt(z);
+            });
+        }
+    }
+
     // weighted cubes: the server moves them, this player asks to put one down, pick one up, carries it (says where it is) and lets go of it
 
     /** asks the server to put a weighted cube into the empty cell */
@@ -306,7 +321,7 @@ public final class GameClient implements Connection.Listener, LevelEditListener 
     }
 
     /** where the carried cube should be and how it is turned */
-    public void sendCubeHold(CubeEntity cube) {
+    public void sendCubeHold(PhysCube cube) {
         if (this.connection != null && this.state == State.PLAYING) {
             int id = cube.id;
             double x = cube.targetX, y = cube.targetY, z = cube.targetZ;
@@ -325,7 +340,7 @@ public final class GameClient implements Connection.Listener, LevelEditListener 
     }
 
     /** the cube was let go of or thrown: its speed and spin are what it left the hands with */
-    public void sendCubeRelease(CubeEntity cube) {
+    public void sendCubeRelease(PhysCube cube) {
         if (this.connection != null && this.state == State.PLAYING) {
             int id = cube.id;
             float vx = (float) cube.vx, vy = (float) cube.vy, vz = (float) cube.vz;
@@ -361,19 +376,22 @@ public final class GameClient implements Connection.Listener, LevelEditListener 
         Set<Integer> ids = new HashSet<>();
         for (Protocol.CubeState st : states) {
             ids.add(st.id);
-            CubeEntity cube = cubes.byId(st.id);
+            WorldEntity cube = cubes.byId(st.id);
             boolean fresh = false;
             if (cube == null) {
-                cube = cubes.addReplica(st.id, st.x, st.y, st.z);
+                cube = cubes.addReplica(st.id, st.piece, st.x, st.y, st.z);
                 if (cube == null) {
                     continue;
                 }
                 fresh = true;
             }
-            cubes.applyPieceCode(cube, st.piece);
-            cube.remoteHeld = !cube.isPiece() && st.holder != -1 && st.holder != me;
-            if (cube.held) {
-                continue;
+            cube.applyPieceCode(st.piece);
+            if (cube instanceof PhysCube) {
+                PhysCube body = (PhysCube) cube;
+                body.remoteHeld = st.holder != -1 && st.holder != me;
+                if (body.held) {
+                    continue;
+                }
             }
             cube.setNetState(st.x, st.y, st.z, st.qw, st.qx, st.qy, st.qz, st.vx, st.vy, st.vz, fresh);
         }
@@ -482,7 +500,7 @@ public final class GameClient implements Connection.Listener, LevelEditListener 
                 int id = in.readInt();
                 later(() -> {
                     CubeManager cubes = this.level.getCubeManager();
-                    CubeEntity cube = cubes.byId(id);
+                    WorldEntity cube = cubes.byId(id);
                     if (cube != null) {
                         this.game.getPlayerInteraction().cubeDenied(id);
                         cubes.remove(cube);
@@ -552,10 +570,14 @@ public final class GameClient implements Connection.Listener, LevelEditListener 
                 float time = in.readFloat();
                 float speed = in.readFloat();
                 boolean frozen = in.readBoolean();
+                int dayCount = in.readInt();
+                int sunPhase = in.readByte();
                 later(() -> {
                     this.game.getDayNightCycle().setTime(time);
                     this.game.getDayNightCycle().setSpeed(speed);
                     this.game.getDayNightCycle().setFrozen(frozen);
+                    this.game.getDayNightCycle().setDayCount(dayCount);
+                    this.game.getDayNightCycle().setSunPhaseOverrideIndex(sunPhase);
                 });
                 break;
             }
@@ -569,6 +591,13 @@ public final class GameClient implements Connection.Listener, LevelEditListener 
             case Protocol.S_SEA_LIQUID: {
                 String liquidName = in.readUTF();
                 later(() -> applySeaLiquid(liquidName));
+                break;
+            }
+            case Protocol.S_SOUND: {
+                int event = in.readUnsignedByte();
+                float strength = in.readUnsignedByte() / 255.0F;
+                int x = in.readInt(), y = in.readInt(), z = in.readInt();
+                later(() -> RemoteSounds.sound(this.game.getPlayer(), event, strength, x, y, z));
                 break;
             }
             case Protocol.S_WORLD_CHANGE: {

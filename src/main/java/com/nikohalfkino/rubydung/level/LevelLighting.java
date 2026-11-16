@@ -2,7 +2,7 @@ package com.nikohalfkino.rubydung.level;
 
 import com.nikohalfkino.rubydung.level.tiles.LightEmitter;
 import com.nikohalfkino.rubydung.level.tiles.Tile;
-import com.nikohalfkino.rubydung.phys.AABB;
+import com.nikohalfkino.rubydung.entity.phys.AABB;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -502,13 +502,40 @@ class LevelLighting {
                 // The cell is still queued when it is in shadow, so the spreading carries on past it, but it only receives light
                 // if the source can actually see it: otherwise light that wrapped around the end of a wall would be as bright
                 // behind the wall as in front of it, because the brightness only depends on the straight-line distance.
-                if (value > 0 && hasLineOfSight(source.x, source.y, source.z, wx, wy, wz)) {
+                if (value > 0 && seesFromSource(source, wx, wy, wz)) {
                     storeLight(wx, wy, wz, value);
                 }
 
                 this.lightQueue[tail++] = next;
             }
         }
+    }
+
+    /**
+     * whether the light can reach the cell (tx, ty, tz). A lamp is a whole block of glow, not a point at the middle of its cell, so a
+     * single ray from the centre lets any block touching the lamp (the floor it stands on, a wall beside it) cut away far more than its
+     * own shadow: every ray that grazes the edge of one of those blocks is thrown out. So the light also counts as coming from each
+     * open cell right beside the source (the six face neighbours): light that gets out of the lamp's cell through any open face
+     * can go on from there. The brightness still depends only on the distance from the source itself
+     */
+    private boolean seesFromSource(LightSource source, int tx, int ty, int tz) {
+        if (hasLineOfSight(source.x, source.y, source.z, tx, ty, tz)) {
+            return true;
+        }
+        for (int[] dir : LIGHT_DIRECTIONS) {
+            int ox = source.x + dir[0];
+            int oy = source.y + dir[1];
+            int oz = source.z + dir[2];
+            if (ox < 0 || oy < 0 || oz < 0
+                    || ox >= this.level.width || oy >= this.level.depth || oz >= this.level.height
+                    || blocksBlockLight(ox, oy, oz)) {
+                continue;
+            }
+            if (hasLineOfSight(ox, oy, oz, tx, ty, tz)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     // whether a straight line from the centre of the cell (sx, sy, sz) to the centre of the cell (tx, ty, tz) passes only through

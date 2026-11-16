@@ -1,6 +1,7 @@
 package com.nikohalfkino.rubydung.render;
 
 import com.nikohalfkino.rubydung.level.DayNightCycle;
+import com.nikohalfkino.rubydung.level.SunPhase;
 import org.lwjgl.BufferUtils;
 
 import javax.imageio.ImageIO;
@@ -22,7 +23,7 @@ public class SkyboxRenderer {
     // one colour per latitude ring (see SkyDomeShader)
     static final int RING_COUNT = LATITUDE_SEGMENTS + 1;
 
-    private static final String SUN_TEXTURE = "/assets/rubydung/textures/enviroment/sun.png";
+    private static final String ENVIRONMENT_DIR = "/assets/rubydung/textures/enviroment/";
     private static final String MOON_TEXTURE = "/assets/rubydung/textures/enviroment/moon.png";
 
     // Aristotle's order outwards: Moon, Mercury (1450), Venus (1500), Sun, Mars (1600) ... see CelestialSphere.
@@ -55,7 +56,8 @@ public class SkyboxRenderer {
     private final CelestialSphere celestialSphere = new CelestialSphere();
 
     private boolean bodyTexturesLoaded = false;
-    private int sunTexture = 0, sunWidth = 0, sunHeight = 0;
+    // one sun texture per phase, {id, width, height}. a phase without a file of its own uses the albedo sun (sun.png)
+    private final int[][] sunTextures = new int[SunPhase.values().length][];
     private int moonTexture = 0, moonWidth = 0, moonHeight = 0;
 
     // The current cycle reference, updated each frame before rendering.
@@ -115,10 +117,10 @@ public class SkyboxRenderer {
     private void drawSunAndMoon() {
         if (!this.bodyTexturesLoaded) {
             this.bodyTexturesLoaded = true;
-            int[] sun = loadTexture(SUN_TEXTURE);
-            this.sunTexture = sun[0];
-            this.sunWidth = sun[1];
-            this.sunHeight = sun[2];
+            for (SunPhase phase : SunPhase.values()) {
+                int[] tex = loadTexture(ENVIRONMENT_DIR + phase.texture(), phase != SunPhase.ALBEDO);
+                this.sunTextures[phase.ordinal()] = tex[0] != 0 || phase == SunPhase.ALBEDO ? tex : this.sunTextures[0];
+            }
             int[] moon = loadTexture(MOON_TEXTURE);
             this.moonTexture = moon[0];
             this.moonWidth = moon[1];
@@ -134,13 +136,16 @@ public class SkyboxRenderer {
         glEnable(GL_BLEND);
         glBlendFunc(GL_ONE, GL_ONE);
 
-        if (this.sunTexture != 0) {
+        // The sun textures have a black background and are blended additively (GL_ONE, GL_ONE), so the black adds
+        // nothing and only the sun shows. The phase changes at midnight, when the sun is far below the horizon.
+        int[] sun = this.sunTextures[this.cycle.getSunPhase().ordinal()];
+        if (sun != null && sun[0] != 0) {
             // Fade out as it drops below the horizon, and turn warm while it is low.
             float visibility = clamp01((sunY + 0.1F) / 0.25F);
             float warm = clamp01(1.0F - sunY / 0.45F);
-            drawBody(this.sunTexture, SUN_DISTANCE, sunX, sunY, sunZ,
-                    this.sunWidth * 0.5F * BODY_PIXEL_SCALE,
-                    this.sunHeight * 0.5F * BODY_PIXEL_SCALE,
+            drawBody(sun[0], SUN_DISTANCE, sunX, sunY, sunZ,
+                    sun[1] * 0.5F * BODY_PIXEL_SCALE,
+                    sun[2] * 0.5F * BODY_PIXEL_SCALE,
                     lerp(1.0F, 1.0F, warm) * visibility,
                     lerp(1.0F, 0.6F, warm) * visibility,
                     lerp(1.0F, 0.3F, warm) * visibility);
