@@ -236,7 +236,8 @@ public final class GameSettings {
     }
 
     public static void load() {
-        File file = new File(OPTIONS_FILE_NAME);
+        // options.txt lives in the game's data folder (see GameDirectory), which is where the launcher writes the username
+        File file = GameDirectory.file(OPTIONS_FILE_NAME);
         if (!file.isFile()) {
             return;
         }
@@ -302,7 +303,7 @@ public final class GameSettings {
         props.setProperty("displayType", displayType.name());
         props.setProperty("fullscreenMode", fullscreenMode.name());
 
-        try (FileOutputStream out = new FileOutputStream(OPTIONS_FILE_NAME)) {
+        try (FileOutputStream out = new FileOutputStream(GameDirectory.file(OPTIONS_FILE_NAME))) {
             props.store(out, "Strata video/general options - see GameSettings");
         } catch (IOException e) {
             e.printStackTrace();

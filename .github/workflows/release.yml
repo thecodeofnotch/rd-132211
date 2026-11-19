@@ -51,12 +51,20 @@ jobs:
           fi
           echo "value=$VERSION" >> "$GITHUB_OUTPUT"
 
-      # If the Windows installer step ever fails with "Can not find WiX tools", add a step before
-      # this one:  run: choco install wixtoolset -y   (if: matrix.platform == 'windows')
-      - name: Build portable image and installer
+      - name: Build portable image
         run: |
           chmod +x gradlew
-          ./gradlew packagePortable packageInstaller -PappVersion="${{ steps.version.outputs.value }}"
+          ./gradlew packagePortable -PappVersion="${{ steps.version.outputs.value }}"
+
+      # The setup/launcher app. Rust and cargo are preinstalled on GitHub's runners.
+      # Run from launcher/ so launcher/.cargo/config.toml (static CRT on Windows) is picked up.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: launcher
+
+      - name: Build launcher
+        working-directory: launcher
+        run: cargo build --release
 
       - name: Collect release files
         env:
@@ -65,7 +73,8 @@ jobs:
         run: |
           mkdir -p dist
 
-          # portable: the app folder zipped, contains portable.txt so data stays inside it
+          # portable: the app folder zipped. The launcher downloads exactly this file
+          # (it looks for "-<windows|linux>-x64-portable.zip"), so keep the name pattern.
           PORTABLE="Strata-${VERSION}-${PLATFORM}-x64-portable"
           (
             cd build/package
@@ -75,10 +84,12 @@ jobs:
             esac
           )
 
-          # regular: the installer (.exe / .deb), renamed to match
-          for f in build/installer/*; do
-            cp "$f" "dist/Strata-${VERSION}-${PLATFORM}-x64-installer.${f##*.}"
-          done
+          # the setup app users actually download (a few MB). No version in the name: it always
+          # fetches the newest release itself.
+          case "$PLATFORM" in
+            windows) cp launcher/target/release/strata-launcher.exe "dist/Strata-Setup-windows-x64.exe" ;;
+            linux)   tar -czf "dist/Strata-Setup-linux-x64.tar.gz" -C launcher/target/release strata-launcher ;;
+          esac
 
           ls -l dist
 

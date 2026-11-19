@@ -1,0 +1,27 @@
+[package]
+name = "strata-launcher"
+version = "1.0.0"
+edition = "2021"
+description = "Installer, launcher and uninstaller for Strata"
+
+[dependencies]
+eframe = "0.29"
+image = { version = "0.25", default-features = false, features = ["png"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+ureq = { version = "2", features = ["json"] }
+zip = { version = "2", default-features = false, features = ["deflate"] }
+dirs = "5"
+
+[target.'cfg(windows)'.dependencies]
+winreg = "0.52"
+
+[build-dependencies]
+winresource = "0.1"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
