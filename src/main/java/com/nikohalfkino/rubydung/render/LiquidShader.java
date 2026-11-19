@@ -198,6 +198,13 @@ public final class LiquidShader {
         GL20.glUniform4(sheetLocation, SHEETS);
     }
 
+    /** compiles and links the program now (it is otherwise built on its first use, in the middle of a frame): called from ShaderWarmup while the world loads */
+    public static void warmUp() {
+        if (program == 0) {
+            init();
+        }
+    }
+
     private static void init() {
         int vs = compile(GL20.GL_VERTEX_SHADER, VERTEX_PATH);
         int fs = compile(GL20.GL_FRAGMENT_SHADER, FRAGMENT_PATH);   // a missing marker shows up as undefined liqTex0
@@ -238,6 +245,13 @@ public final class LiquidShader {
 
         distortionTexture = loadDistortionTexture();
         program = p;
+    }
+
+    /** the depth pre-pass program, see warmUp() */
+    public static void warmUpDepth() {
+        if (depthProgram == 0) {
+            initDepth();
+        }
     }
 
     private static void initDepth() {

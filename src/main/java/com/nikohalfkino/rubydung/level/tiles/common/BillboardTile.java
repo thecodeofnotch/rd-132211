@@ -280,7 +280,9 @@ public class BillboardTile extends Tile {
         float worldY = y - level.getBillboardDrop(x, y, z);
         float worldZ = z + 0.5F + getPivotOffsetZ();
 
-        mesh.add(worldX, worldY, worldZ, getSpriteSize(), minU, minV, maxU, maxV, sky, block, alpha, this.aura);
+        // a thin mesh (the sprites) gets no aura, a mesh made withAuras() (the glows, see Chunk.computeBillboards) gets this tile's
+        mesh.add(worldX, worldY, worldZ, getSpriteSize(), minU, minV, maxU, maxV, sky, block, alpha,
+                mesh.carriesAuras() ? this.aura : null);
     }
 
     /** Same sprite as renderBillboardBatched, but one quad instead of two. Face culling must be off while it is drawn. */

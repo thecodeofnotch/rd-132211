@@ -1,5 +1,7 @@
 package com.nikohalfkino.rubydung.level.tiles;
 
+import com.nikohalfkino.rubydung.entity.cube.Dice;
+import com.nikohalfkino.rubydung.level.tiles.special.ColoredDiceTile;
 import com.nikohalfkino.rubydung.level.tiles.special.LiquidTile;
 import com.nikohalfkino.rubydung.level.tiles.special.DoorColor;
 import com.nikohalfkino.rubydung.level.tiles.common.SlabTile;
@@ -29,6 +31,8 @@ public final class TileRegistry {
     private static final Registry<Tile>      REGISTRY      = new Registry<>();
     private static final Map<String, Tile>   BY_NAME       = new HashMap<>();
     private static       List<Tile>          placeableTiles;
+    private static       List<Tile>          tileGroup;
+    private static       List<Tile>          gadgetGroup;
 
     public static final Tile AIR = register(new Tile("air").setSolid(false).setPlaceable(false));
 
@@ -236,6 +240,15 @@ public final class TileRegistry {
     // like the weighted cube an entity, not a block: placing it spawns a dice, see DiceTile. last, so no saved id changes
     public static final Tile DICE = register(new DiceTile());
 
+    // the see-through dice, red and blue: the same, one tile for each colour (see ColoredDiceTile). last, so no saved id changes
+    public static final Tile DICE_RED = register(new ColoredDiceTile(Dice.Color.RED));
+    public static final Tile DICE_BLUE = register(new ColoredDiceTile(Dice.Color.BLUE));
+
+    /** the tile a dice of this colour is placed from */
+    public static Tile diceTile(Dice.Color color) {
+        return color == Dice.Color.RED ? DICE_RED : color == Dice.Color.BLUE ? DICE_BLUE : DICE;
+    }
+
     public static Tile byName(String name) {
         return BY_NAME.get(name);
     }
@@ -255,6 +268,28 @@ public final class TileRegistry {
             placeableTiles = Collections.unmodifiableList(placeable);
         }
         return placeableTiles;
+    }
+
+    /** the weighted cube, the dice and the chess pieces: things that are spawned as entities instead of being built into the level. they are the gadgets of the inventory, and the wheel keeps them apart from the tiles (see getCycleGroup) */
+    public static boolean isGadget(Tile tile) {
+        return tile instanceof CubeTile || tile instanceof DiceTile || tile instanceof ColoredDiceTile
+                || tile instanceof ChessPieceTile;
+    }
+
+    /**
+     * the tiles the wheel steps through while this one is selected: the gadgets if it is one, every other tile (blocks and props) if not. each in the order of getCycleOrder. choosing something from the other group in the inventory, or picking it with the pick button, moves to that group
+     */
+    public static List<Tile> getCycleGroup(Tile tile) {
+        if (tileGroup == null) {
+            List<Tile> tiles = new ArrayList<>();
+            List<Tile> gadgets = new ArrayList<>();
+            for (Tile t : getCycleOrder()) {
+                (isGadget(t) ? gadgets : tiles).add(t);
+            }
+            tileGroup = Collections.unmodifiableList(tiles);
+            gadgetGroup = Collections.unmodifiableList(gadgets);
+        }
+        return isGadget(tile) ? gadgetGroup : tileGroup;
     }
 
     private static <T extends Tile> T register(T tile) {

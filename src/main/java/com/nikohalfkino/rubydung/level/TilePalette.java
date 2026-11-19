@@ -120,6 +120,23 @@ public final class TilePalette {
         return encoded;
     }
 
+    /** same as encode() but rewrites the given array instead of allocating another one, only for a copy nobody else reads */
+    public byte[] encodeInPlace(byte[] blocks) {
+        int[] fromCurrent = new int[256];
+        Arrays.fill(fromCurrent, -1);
+
+        for (int i = 0; i < blocks.length; i++) {
+            int id = blocks[i] & 0xFF;
+            int index = fromCurrent[id];
+            if (index < 0) {
+                index = indexFor(id);
+                fromCurrent[id] = index;
+            }
+            blocks[i] = (byte) index;
+        }
+        return blocks;
+    }
+
     private int indexFor(int tileId) {
         Tile tile = Tile.byId(tileId);
         String name = tile != null ? tile.name : Tile.AIR.name;

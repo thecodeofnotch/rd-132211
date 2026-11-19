@@ -1,6 +1,9 @@
 package com.nikohalfkino.rubydung.entity;
 
 import com.nikohalfkino.rubydung.entity.cube.Dice;
+import com.nikohalfkino.rubydung.entity.phys.ParticleEntity;
+import com.nikohalfkino.rubydung.entity.ragdoll.Ragdoll;
+import com.nikohalfkino.rubydung.entity.ragdoll.RagdollRig;
 import com.nikohalfkino.rubydung.entity.player.PlayerPhysics;
 import com.nikohalfkino.rubydung.level.tiles.special.ChessPieceTile;
 import com.nikohalfkino.rubydung.util.Registry;
@@ -31,6 +34,15 @@ public final class EntityTypes {
             new EntityType("dice")
                     .holdable().throwable().pushable().solidForPlayer().physics()
                     .shape(EntityType.Shape.BOX)
+                    .capGroup(GROUP_CUBES, 64));
+
+    /**
+     * a ragdoll: a person made of points, drawn as a 3D model bent to them (see Ragdoll). picked up by any limb, thrown and pushed, and it shares the cube cap. the player is not stopped by it (no solidForPlayer): the limbs are pushed out of the player's box instead, so walking into one shoves it aside and never traps anybody. its hull is the box around the limbs, it changes with the pose, so it is a dynamic one
+     */
+    public static final EntityType RAGDOLL = register(
+            new EntityType("ragdoll")
+                    .holdable().throwable().pushable().physics().dynamicHull()
+                    .shape(EntityType.Shape.MODEL)
                     .capGroup(GROUP_CUBES, 64));
 
     // index = ChessPieceTile.Type ordinal
@@ -76,10 +88,13 @@ public final class EntityTypes {
         return REGISTRY.entries();
     }
 
-    /** the type of a piece code (see WorldEntity.pieceCode): a plain cube or a dice for a negative one */
+    /** the type of a piece code (see WorldEntity.pieceCode): a plain cube, a dice or a ragdoll for a negative one */
     public static EntityType forPieceCode(int code) {
         if (code < 0) {
-            return code <= Dice.CODE_IDLE ? DICE : WEIGHTED_CUBE;
+            if (Ragdoll.isRagdollCode(code)) {
+                return RAGDOLL;
+            }
+            return Dice.isDiceCode(code) ? DICE : WEIGHTED_CUBE;
         }
         return CHESS[Math.min(code & 7, CHESS.length - 1)];
     }
@@ -93,6 +108,16 @@ public final class EntityTypes {
             }
         }
         return cap;
+    }
+
+    /**
+     * how many bytes of extra state (see WorldEntity.writeExtra) follow the entry of an entity with this piece code in the save file and on the network. 0 for everything that has none. the size is a fact of the piece code alone, so a reader knows how much to take without asking the entity
+     */
+    public static int extraSizeOf(int pieceCode) {
+        if (Ragdoll.isRagdollCode(pieceCode)) {
+            return ParticleEntity.extraBytes(RagdollRig.PARTICLES);
+        }
+        return 0;
     }
 
     /** call once the game and its mods have registered everything */

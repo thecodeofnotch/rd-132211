@@ -1,5 +1,6 @@
 package com.nikohalfkino.rubydung.level;
 
+import com.nikohalfkino.rubydung.level.tiles.common.BillboardAura;
 import com.nikohalfkino.rubydung.level.tiles.common.BillboardTile;
 import com.nikohalfkino.rubydung.level.tiles.special.LiquidTile;
 import com.nikohalfkino.rubydung.level.tiles.Tile;
@@ -25,7 +26,11 @@ public class Chunk {
     public static final int LAYER_BILLBOARD = 3;
     // the sprites whose texture has no partly transparent pixels: drawn as cut-outs, before the blended ones
     public static final int LAYER_BILLBOARD_CUTOUT = 4;
-    private static final int LAYERS = 5;
+    // only the sprites that have an aura, as the glow's own geometry (see BillboardMesh.withAuras), one list per pass of
+    // LevelRenderer.renderBillboardAuras: the ones blended with alpha (NORMAL and ADD) and the SCREEN ones. a chunk without auras has nothing in them
+    public static final int LAYER_AURA_ALPHA = 5;
+    public static final int LAYER_AURA_SCREEN = 6;
+    private static final int LAYERS = 7;
 
     private static final int TEXTURE;
     private static final Textures.AtlasLayout ATLAS_LAYOUT;
@@ -163,6 +168,8 @@ public class Chunk {
         private boolean liquidFound = false;
         private BillboardMesh billboardMesh;
         private BillboardMesh billboardCutoutMesh;
+        private BillboardMesh auraAlphaMesh;
+        private BillboardMesh auraScreenMesh;
 
         @SuppressWarnings("unchecked")
         private Built(Chunk chunk) {
@@ -203,6 +210,14 @@ public class Chunk {
                 } else if (layer == LAYER_BILLBOARD_CUTOUT) {
                     if (built.billboardCutoutMesh != null) {
                         built.billboardCutoutMesh.draw();
+                    }
+                } else if (layer == LAYER_AURA_ALPHA) {
+                    if (built.auraAlphaMesh != null) {
+                        built.auraAlphaMesh.draw();
+                    }
+                } else if (layer == LAYER_AURA_SCREEN) {
+                    if (built.auraScreenMesh != null) {
+                        built.auraScreenMesh.draw();
                     }
                 } else {
                     for (Tessellator.Mesh mesh : built.meshes[layer]) {
@@ -245,6 +260,12 @@ public class Chunk {
         }
         if (layer == LAYER_BILLBOARD_CUTOUT) {
             return !built.empty[layer] && built.billboardCutoutMesh != null && !built.billboardCutoutMesh.isEmpty();
+        }
+        if (layer == LAYER_AURA_ALPHA) {
+            return !built.empty[layer] && built.auraAlphaMesh != null && !built.auraAlphaMesh.isEmpty();
+        }
+        if (layer == LAYER_AURA_SCREEN) {
+            return !built.empty[layer] && built.auraScreenMesh != null && !built.auraScreenMesh.isEmpty();
         }
         return !built.empty[layer] && built.meshes[layer] != null && !built.meshes[layer].isEmpty();
     }
@@ -318,19 +339,31 @@ public class Chunk {
         return true;
     }
 
-    // the sprites found by the terrain pass (layer 0, which always runs first), as one static mesh
+    // the sprites found by the terrain pass (layer 0, which always runs first), as static meshes: the sprites themselves (thin, no aura data),
+    // and apart from them the glow of the sprites that have one, so the aura passes draw only those
     private void computeBillboards(Built built) {
         BillboardMesh blended = new BillboardMesh();
         BillboardMesh cutouts = new BillboardMesh();
+        BillboardMesh auraAlpha = BillboardMesh.withAuras();
+        BillboardMesh auraScreen = BillboardMesh.withAuras();
         for (int[] pos : built.billboards) {
             Tile tile = Tile.byId(this.level.getTile(pos[0], pos[1], pos[2]));
             if (tile instanceof BillboardTile) {
                 BillboardTile sprite = (BillboardTile) tile;
                 sprite.emitStatic(sprite.isTranslucent() ? blended : cutouts, this.level, pos[0], pos[1], pos[2]);
+
+                // the same test the vertex shader made to throw an aura away: no radius or no density is no glow
+                BillboardAura aura = sprite.getAura();
+                if (aura != null && aura.getRadius() > 0.0F && aura.getStrength() > 0.0F) {
+                    sprite.emitStatic(aura.getBlend() == BillboardAura.Blend.SCREEN ? auraScreen : auraAlpha,
+                            this.level, pos[0], pos[1], pos[2]);
+                }
             }
         }
         built.billboardMesh = blended;
         built.billboardCutoutMesh = cutouts;
+        built.auraAlphaMesh = auraAlpha;
+        built.auraScreenMesh = auraScreen;
     }
 
     private void computeLayer(Built built, int layer, Tessellator tessellator) {
@@ -338,8 +371,8 @@ public class Chunk {
             computeBillboards(built);   // makes the cut-out sprites' mesh too
             return;
         }
-        if (layer == LAYER_BILLBOARD_CUTOUT) {
-            return;
+        if (layer == LAYER_BILLBOARD_CUTOUT || layer == LAYER_AURA_ALPHA || layer == LAYER_AURA_SCREEN) {
+            return;   // made together with the sprites, see computeBillboards
         }
         if (layer == 1) {
             // terrain is one list now (layer 0 draws lit and shadowed faces alike, see Tile.LAYER_ALL): the shader lights each

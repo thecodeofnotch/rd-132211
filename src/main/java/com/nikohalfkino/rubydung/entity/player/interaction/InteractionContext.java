@@ -21,6 +21,12 @@ final class InteractionContext {
 
     Tile selectedTile = Tile.GRASS;
 
+    // a ragdoll chosen in the inventory: the place button spawns one instead of placing selectedTile
+    boolean ragdollSelected = false;
+
+    // the ragdoll of the current press of the place button is already down (ragdolls are heavy, see CubeManager.MAX_RAGDOLLS: holding the button does not put down more)
+    boolean ragdollPlaced = false;
+
     // ticks until the held button may act again
     int actionCooldown = 0;
 

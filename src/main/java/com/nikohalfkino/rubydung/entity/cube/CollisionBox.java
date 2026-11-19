@@ -1,14 +1,16 @@
 package com.nikohalfkino.rubydung.entity.cube;
 
-/** one axis-aligned obstacle for a PhysCube; owner is the cube it belongs to, null for the world and the players */
+import com.nikohalfkino.rubydung.entity.phys.PhysEntity;
+
+/** one axis-aligned obstacle for a PhysEntity; owner is the body it belongs to (a cube, or a limb of a ragdoll), null for the world and the players */
 public final class CollisionBox {
     public double minX, minY, minZ, maxX, maxY, maxZ;
-    public PhysCube owner;
+    public PhysEntity owner;
     /** a player's body (not the world or a cube): hitting it is heard. bodyId is the player's id, -1 = the player of this machine */
     public boolean body;
     public int bodyId = -1;
 
-    public CollisionBox(double minX, double minY, double minZ, double maxX, double maxY, double maxZ, PhysCube owner) {
+    public CollisionBox(double minX, double minY, double minZ, double maxX, double maxY, double maxZ, PhysEntity owner) {
         this.minX = minX;
         this.minY = minY;
         this.minZ = minZ;

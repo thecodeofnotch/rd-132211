@@ -9,8 +9,7 @@ public class CubeTile extends Tile {
 
     public static final String NAME = "weighted_cube";
 
-    // textures/block/test.png
-    private static final String TEXTURE = "test";
+    private static final String TEXTURE = "weighted_cube";
 
     public CubeTile() {
         super(NAME, TEXTURE);

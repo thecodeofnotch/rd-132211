@@ -11,6 +11,7 @@ import com.nikohalfkino.rubydung.level.tiles.Tile;
 import com.nikohalfkino.rubydung.entity.player.Player;
 import com.nikohalfkino.rubydung.render.CleanEdgeShader;
 import com.nikohalfkino.rubydung.render.Font;
+import com.nikohalfkino.rubydung.render.RagdollRenderer;
 import com.nikohalfkino.rubydung.render.Textures;
 
 import java.util.HashMap;
@@ -89,6 +90,9 @@ public class HandHud extends Widget {
     // held billboards draw every sprite pixel the same size on screen (a 32px sprite is twice a 16px one), then all get scaled by this
     // 1 would make a 16px sprite cube-sized, lower it to shrink every held prop
     private static final float HELD_SPRITE_SCALE = 0.25F;
+
+    // a held ragdoll is this many block sizes tall
+    private static final float HELD_RAGDOLL_HEIGHT = 2.2F;
 
     private static final float SPIN_FPS = 10.0F;
     private static final float SPIN_STEP_DEGREES = 12.0F;
@@ -295,7 +299,10 @@ public class HandHud extends Widget {
 
         boolean blendWasOn = glIsEnabled(GL_BLEND);
 
-        if (this.shownTile != null && !hideHeld) {
+        // a ragdoll picked in the inventory: the hand holds the model (no morph, it just replaces the block)
+        boolean ragdollHeld = this.game.getPlayerInteraction() != null && this.game.getPlayerInteraction().isRagdollSelected();
+
+        if ((this.shownTile != null || ragdollHeld) && !hideHeld) {
             // TileIconRenderer ignores the current matrices, so the wrist tilt is applied to its centre by hand.
             float pivotX = left + width / 2.0F;
             float pivotY = top + spriteHeight;
@@ -308,7 +315,10 @@ public class HandHud extends Widget {
             float spin = (float) Math.floor(this.clock * SPIN_FPS) * SPIN_STEP_DEGREES;
             float tileSize = size * BLOCK_SCALE;
 
-            if (this.morph < 1.0F && this.fromTile != null) {
+            if (ragdollHeld) {
+                RagdollRenderer.drawIcon(0, cx, cy, tileSize * HELD_RAGDOLL_HEIGHT,
+                        (int) rootWidth, (int) rootHeight, spin, 1.0F - darken);
+            } else if (this.morph < 1.0F && this.fromTile != null) {
                 float t = morphStep();
 
                 drawHeld(this.fromTile, cx, cy, tileSize * (1.0F - smoothstep(t)),

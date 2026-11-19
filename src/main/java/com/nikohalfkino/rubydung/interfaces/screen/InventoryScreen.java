@@ -1,6 +1,7 @@
 package com.nikohalfkino.rubydung.interfaces.screen;
 
 import com.nikohalfkino.rubydung.RubyDung;
+import com.nikohalfkino.rubydung.entity.ragdoll.RagdollRig;
 import com.nikohalfkino.rubydung.interfaces.FramePanelScreen;
 import com.nikohalfkino.rubydung.interfaces.GameFrame;
 import com.nikohalfkino.rubydung.interfaces.widget.PanelSection;
@@ -9,6 +10,7 @@ import com.nikohalfkino.rubydung.interfaces.widget.Anchor;
 import com.nikohalfkino.rubydung.interfaces.widget.Button;
 import com.nikohalfkino.rubydung.interfaces.widget.SlotGrid;
 import com.nikohalfkino.rubydung.level.tiles.Tile;
+import com.nikohalfkino.rubydung.render.RagdollRenderer;
 import com.nikohalfkino.rubydung.level.tiles.special.ChessPieceTile;
 import com.nikohalfkino.rubydung.level.tiles.special.CubeTile;
 import com.nikohalfkino.rubydung.level.tiles.special.DiceTile;
@@ -24,9 +26,10 @@ import java.util.List;
 /**
  * while open, GameFrame shrinks the world view and slides the panel in (being a Screen, the camera gets no mouse input)
  *
- * two tabs, switched with the buttons in the bar under the world view:
+ * three tabs, switched with the buttons in the bar under the world view:
  * "Tiles": "Palette" (ordinary tiles) and "Props" (billboarded tiles)
- * "Gadgets": "Tools" (empty for now) and "Gizmos" (the weighted cube, the dice and the chess pieces)
+ * "Gadgets": "Tools" (empty for now) and "Gizmos" (the weighted cube, the dice in three colours and the chess pieces)
+ * "Ragdolls": "Bodies" (every ragdoll model, see RagdollRig). a ragdoll is not a tile: choosing one tells PlayerInteraction to spawn it with the place button, choosing a tile again puts it away
  *
  * each section is a SlotGrid pinned to its panel section every frame. the panel shows the sections of the current tab only
  *
@@ -41,12 +44,17 @@ public class InventoryScreen extends FramePanelScreen {
     // real pixels between the tab buttons
     private static final float TAB_GAP = 8.0F;
 
+    // a ragdoll's slot icon: how tall (in icon sizes) and how far turned (degrees)
+    private static final float ICON_RAGDOLL_HEIGHT = 1.7F;
+    private static final float ICON_RAGDOLL_SPIN = 25.0F;
+
     // an empty grid (Tools) is this many slots wide and one row tall
     private static final int EMPTY_COLUMNS = 4;
 
     private enum Tab {
         TILES("Tiles"),
-        GADGETS("Gadgets");
+        GADGETS("Gadgets"),
+        RAGDOLLS("Ragdolls");
 
         final String label;
 
@@ -60,9 +68,9 @@ public class InventoryScreen extends FramePanelScreen {
         final String title;
         final int columns;
         final int rows;
-        final SlotGrid<Tile> grid;
+        final SlotGrid<?> grid;
 
-        Section(String title, int columns, int rows, SlotGrid<Tile> grid) {
+        Section(String title, int columns, int rows, SlotGrid<?> grid) {
             this.title = title;
             this.columns = columns;
             this.rows = rows;
@@ -104,6 +112,12 @@ public class InventoryScreen extends FramePanelScreen {
         addEmptyGrid(Tab.GADGETS, "Tools");
         addGrid(Tab.GADGETS, "Gizmos", gizmos);
 
+        List<Integer> bodies = new ArrayList<>();
+        for (int i = 0; i < RagdollRig.count(); i++) {
+            bodies.add(i);   // the model's number (see RagdollRig)
+        }
+        addRagdollGrid(Tab.RAGDOLLS, "Bodies", bodies);
+
         for (Tab t : Tab.values()) {
             Button button = add(new Button(t.label, 0.0F, 0.0F, true).onClick(() -> setTab(t)),
                     Anchor.TOP_LEFT, 0, 0);
@@ -116,13 +130,13 @@ public class InventoryScreen extends FramePanelScreen {
 
     /** the weighted cube, the dice and the chess pieces: things that are spawned as entities instead of being built into the level */
     private static boolean isGizmo(Tile tile) {
-        return tile instanceof CubeTile || tile instanceof DiceTile || tile instanceof ChessPieceTile;
+        return Tile.isGadget(tile);
     }
 
     private SlotGrid<Tile> newGrid(List<Tile> items) {
         return new SlotGrid<Tile>()
                 .setItems(items)
-                .selectedWhen(tile -> tile == this.game.getSelectedTile())
+                .selectedWhen(tile -> !this.game.getPlayerInteraction().isRagdollSelected() && tile == this.game.getSelectedTile())
                 .onSelect(tile -> this.game.getPlayerInteraction().setSelectedTile(tile))
                 .setIconDrawer((tile, cx, cy, size, w, h) ->
                         TileIconRenderer.draw(tile, this.game.getLevel(), cx, cy, size, w, h))
@@ -138,6 +152,23 @@ public class InventoryScreen extends FramePanelScreen {
         int side = Math.min(GameFrame.GRID_ROWS, (int) Math.ceil(Math.sqrt(items.size())));
 
         this.sections.get(target).add(new Section(title, side, side, add(newGrid(items), Anchor.TOP_LEFT, 0, 0)));
+    }
+
+    // a ragdoll is no Tile, so its grid holds the numbers of the models. spawning always uses the first model for now (CubeManager.spawnIn takes a kind, not a model)
+    private void addRagdollGrid(Tab target, String title, List<Integer> items) {
+        if (items.isEmpty()) {
+            return;
+        }
+        int side = Math.min(GameFrame.GRID_ROWS, (int) Math.ceil(Math.sqrt(items.size())));
+
+        SlotGrid<Integer> grid = new SlotGrid<Integer>()
+                .setItems(items)
+                .selectedWhen(model -> this.game.getPlayerInteraction().isRagdollSelected())
+                .onSelect(model -> this.game.getPlayerInteraction().setRagdollSelected(true))
+                // the real model, a little turned so it is not flat on. the icon size is the cube scale, a person is taller than a cube
+                .setIconDrawer((model, cx, cy, size, w, h) ->
+                        RagdollRenderer.drawIcon(model, cx, cy, size * ICON_RAGDOLL_HEIGHT, w, h, ICON_RAGDOLL_SPIN, 1.0F));
+        this.sections.get(target).add(new Section(title, side, side, add(grid, Anchor.TOP_LEFT, 0, 0)));
     }
 
     private void addEmptyGrid(Tab target, String title) {

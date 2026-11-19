@@ -378,14 +378,49 @@ public class Level {
         }
 
         int size = this.blocks.length;
-        if (this.blocksSnapshot == null || this.blocksSnapshot.length != size) {
-            this.blocksSnapshot = new byte[size];
-            this.dataSnapshot = new byte[size];
+
+        // A nearly full heap doesn't throw straight away, it makes the JVM collect garbage back to back and the game
+        // freezes for minutes (a swapping PC freezes too). So check the headroom first and skip the autosave if the copies
+        // wouldn't fit comfortably.
+        boolean haveBuffers = this.blocksSnapshot != null && this.blocksSnapshot.length == size;
+        if (!haveBuffers) {
+            Runtime rt = Runtime.getRuntime();
+            long free = rt.maxMemory() - (rt.totalMemory() - rt.freeMemory());
+            long needed = 4L * size + size;   // the four copies, plus the palette encode and gzip buffers
+            if (free < needed * 3 / 2) {
+                this.asyncSaveRunning.set(false);
+                System.err.println("[autosave] skipped, only " + (free >> 20) + " MB of heap free, need about " + (needed >> 20) + " MB");
+                return;
+            }
         }
-        this.snapshotCopied = 0;
-        this.snapshotOnDone = onDone;
-        this.snapshotPending = true;
-        this.liquids.beginSnapshot();
+
+        try {
+            if (this.blocksSnapshot == null || this.blocksSnapshot.length != size) {
+                this.blocksSnapshot = null;   // let the old ones go before asking for new ones
+                this.dataSnapshot = null;
+                this.blocksSnapshot = new byte[size];
+                this.dataSnapshot = new byte[size];
+            }
+            this.snapshotCopied = 0;
+            this.snapshotOnDone = onDone;
+            this.liquids.beginSnapshot();
+            this.snapshotPending = true;
+        } catch (OutOfMemoryError e) {
+            // not enough heap for the copy: skip this autosave instead of taking the whole game down with it
+            this.snapshotPending = false;
+            this.snapshotOnDone = null;
+            this.blocksSnapshot = null;
+            this.dataSnapshot = null;
+            this.liquids.releaseSnapshot();
+            this.asyncSaveRunning.set(false);
+            System.err.println("[autosave] skipped, not enough memory for the copy (try -Xmx2g or a smaller world)");
+        }
+    }
+
+    /** a heap too small to keep four world sized copies around between autosaves gives them back after each one */
+    private boolean keepSnapshotBuffers() {
+        long copies = 4L * this.blocks.length;
+        return copies * 3 < Runtime.getRuntime().maxMemory();
     }
 
     /** game thread, once per tick: copies the next slice of an autosave that is under way (does nothing otherwise) */
@@ -446,7 +481,7 @@ public class Level {
 
             SaveQueue.submit(() -> {
                 try {
-                    byte[] encodedBlocks = savePalette.encode(blocksCopy);
+                    byte[] encodedBlocks = savePalette.encodeInPlace(blocksCopy);   // the copy is ours, no third array
                     WorldManager.saveWorldPalette(name, savePalette);
                     saveMultiTiles.run();
                     saveSubTiles.run();
@@ -454,8 +489,13 @@ public class Level {
                     saveDoors.run();
                     saveLiquids.run();
                     saveCubes.run();
-                    LevelIO.save(file, encodedBlocks, dataCopy, position);
+                    LevelIO.save(file, encodedBlocks, dataCopy, position, true);
                 } finally {
+                    if (!keepSnapshotBuffers()) {
+                        this.blocksSnapshot = null;
+                        this.dataSnapshot = null;
+                        this.liquids.releaseSnapshot();
+                    }
                     this.asyncSaveRunning.set(false);
                 }
                 if (onDone != null) {
@@ -464,7 +504,8 @@ public class Level {
             });
         } catch (RuntimeException | Error e) {
             this.asyncSaveRunning.set(false);
-            throw e;
+            System.err.println("[autosave] failed to start: " + e);
+            e.printStackTrace();
         }
     }
 

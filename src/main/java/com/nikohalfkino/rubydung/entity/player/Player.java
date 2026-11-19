@@ -6,6 +6,7 @@ import com.nikohalfkino.rubydung.entity.Entity;
 import com.nikohalfkino.rubydung.entity.EntityTypes;
 import com.nikohalfkino.rubydung.net.Multiplayer;
 import com.nikohalfkino.rubydung.level.Level;
+import com.nikohalfkino.rubydung.level.WorldBorder;
 import com.nikohalfkino.rubydung.level.tiles.special.LiquidTile;
 import com.nikohalfkino.rubydung.entity.phys.AABB;
 import com.nikohalfkino.rubydung.util.KeyBinding;
@@ -183,8 +184,11 @@ public class Player extends Entity {
         }
         double[] velocity = this.physics.velocity;
         double horizontal = Math.hypot(velocity[PlayerPhysics.X], velocity[PlayerPhysics.Z]);
-        this.bodySounds.tick(velocity[PlayerPhysics.Y], horizontal, this.physics.isOnGround(),
-                this.physics.getWaterLevel(), TICK_SECONDS, 1.0F, this.bodySoundListener);
+        boolean loud = this.bodySounds.tick(velocity[PlayerPhysics.Y], horizontal, this.physics.isOnGround(),
+                this.physics.getWaterLevel(), this.physics.isHeadUnder(), TICK_SECONDS, 1.0F, this.bodySoundListener);
+        if (loud) {
+            this.footsteps.holdOff();   // a jump, a landing or a splash was just heard: no step on top of it
+        }
         if (this.footsteps.tick(this.x, this.y - EYE_HEIGHT, this.z, this.physics.isOnGround(),
                 this.physics.getWaterLevel(), this.x - this.prevX, this.z - this.prevZ)) {
             Multiplayer.footstep(this, FootstepSounds.VOLUME);   // the others near here hear it too
@@ -284,6 +288,57 @@ public class Player extends Entity {
         this.physics.move(cmd, mode, TICK_SECONDS);
 
         syncFromPhysics();
+        keepInsideWorld();
+    }
+
+    /**
+     * The edge of the world. Walking stops at it: the fake terrain past it (WorldBorderRenderer) has no collision, so a
+     * walker who got onto it would only fall through. Flying may hover a little past the edge to look over it, and as high
+     * as it likes. Noclip is not limited at all.
+     * A player who is not in noclip and falls out of the bottom of the world comes back in over the top.
+     */
+    private void keepInsideWorld() {
+        if (this.noClip) {
+            return;
+        }
+
+        double[] origin = this.physics.origin;
+        double[] velocity = this.physics.velocity;
+
+        double margin = this.flying ? WorldBorder.FLY_MARGIN : -PlayerPhysics.HALF_WIDTH;
+        boolean clamped = clampAxis(origin, velocity, PlayerPhysics.X, -margin, this.level.width + margin);
+        clamped |= clampAxis(origin, velocity, PlayerPhysics.Z, -margin, this.level.height + margin);
+
+        double shiftY = 0.0D;
+        if (origin[PlayerPhysics.Y] < -WorldBorder.VOID_MARGIN) {
+            // back in well above the top of the world (the world is faded out up there and fades in as the player comes down, see WorldBorder.voidVisibility)
+            shiftY = WorldBorder.voidReturnShift(origin[PlayerPhysics.Y], this.level.depth);
+        }
+
+        if (shiftY == 0.0D && !clamped) {
+            return;
+        }
+
+        // a wrap is a jump over the whole height of the world, not a movement: the velocity is kept (you keep falling) and the position the camera
+        // blends from is moved by the same amount, or it would swing across the whole world for one frame. a clamp is only a push back
+        origin[PlayerPhysics.Y] += shiftY;
+        syncFromPhysics();
+        this.prevY += shiftY;
+    }
+
+    /** keeps origin[axis] inside [min, max] and cancels the velocity that pushes into the wall. true if it had to move it */
+    private static boolean clampAxis(double[] origin, double[] velocity, int axis, double min, double max) {
+        if (origin[axis] < min) {
+            origin[axis] = min;
+            velocity[axis] = Math.max(velocity[axis], 0.0D);
+            return true;
+        }
+        if (origin[axis] > max) {
+            origin[axis] = max;
+            velocity[axis] = Math.min(velocity[axis], 0.0D);
+            return true;
+        }
+        return false;
     }
 
     private void syncFromPhysics() {

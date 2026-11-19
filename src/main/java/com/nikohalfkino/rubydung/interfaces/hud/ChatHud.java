@@ -88,7 +88,7 @@ public class ChatHud extends Widget {
      * and not a fixed number, which is what used to make the two overlap
      */
     private float aboveSelectedTile() {
-        float selectedHeight = SelectedTileHud.heightFor(this.game.getSelectedTile());
+        float selectedHeight = SelectedTileHud.heightFor(this.game);
         return SelectedTileHud.EDGE_MARGIN + selectedHeight + GAP_ABOVE_SELECTED_TILE;
     }
 

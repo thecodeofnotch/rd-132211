@@ -19,11 +19,15 @@ public final class FootstepSounds {
     /** a move longer than this in one tick is a teleport (a door), not a walk */
     private static final double MAX_STEP_MOVE = 1.0D;
     /** loudness of a step, also what is sent to the other players (as the strength) */
-    public static final float VOLUME = 0.7F;
+    public static final float VOLUME = 0.5F;
+
+    /** ticks without steps after a jump, a landing or a splash (they have their own sound, a step on top of it only muddies it) */
+    private static final int HOLD_OFF_TICKS = 20;
 
     private final Level level;
     private double walked;
     private boolean wasOnGround;
+    private int quiet;
 
     public FootstepSounds(Level level) {
         this.level = level;
@@ -33,6 +37,13 @@ public final class FootstepSounds {
     public void reset() {
         this.walked = 0.0D;
         this.wasOnGround = false;
+        this.quiet = 0;
+    }
+
+    /** a louder sound of the body was just played (BodySounds: jump, landing, splash): there is no step for a moment, and the distance walked starts again */
+    public void holdOff() {
+        this.quiet = HOLD_OFF_TICKS;
+        this.walked = 0.0D;
     }
 
     /**
@@ -40,6 +51,9 @@ public final class FootstepSounds {
      */
     public boolean tick(double x, double feetY, double z, boolean onGround, int waterLevel, double dx, double dz) {
         double moved = Math.hypot(dx, dz);
+        if (this.quiet > 0) {
+            this.quiet--;
+        }
         if (!onGround || waterLevel > 0 || moved > MAX_STEP_MOVE) {
             this.wasOnGround = onGround;
             if (waterLevel > 0 || moved > MAX_STEP_MOVE) {
@@ -52,6 +66,11 @@ public final class FootstepSounds {
             // just landed (the landing has its own sound): the next step is a whole stride away
             this.walked = 0.0D;
             this.wasOnGround = true;
+            return false;
+        }
+
+        if (this.quiet > 0) {
+            this.walked = 0.0D;   // the step after a landing is a whole stride away, counted from when it is quiet again
             return false;
         }
 

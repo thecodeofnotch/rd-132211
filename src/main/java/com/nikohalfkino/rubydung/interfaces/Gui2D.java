@@ -12,6 +12,11 @@ public final class Gui2D {
     // open begin() calls, widgets like TextInput nest them, so only the outermost end() restores the 3D state
     private static int depth = 0;
 
+    /** whether a begin() is open: the 2D state (blending on, alpha-blend function set, no depth test) is then known without asking the driver */
+    public static boolean isActive() {
+        return depth > 0;
+    }
+
     public static void begin(int width, int height) {
         depth++;
 

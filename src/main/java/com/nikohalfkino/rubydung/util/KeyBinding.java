@@ -43,26 +43,27 @@ public class KeyBinding {
 
     // flight: FLY_TOGGLE / NOCLIP_TOGGLE are mouseBindable = false because InputHandler only compares them against keyboard events, a mouse button would silently do nothing
     // FLY_SPEED_MODIFIER is read via isDown() (device-aware) but kept keyboard-only, since it's held alongside a scroll gesture
-    public static final KeyBinding FLY_TOGGLE = new KeyBinding("fly_toggle", "Toggle Flying", Keyboard.KEY_V, false);
-    public static final KeyBinding NOCLIP_TOGGLE = new KeyBinding("noclip_toggle", "Toggle Noclip", Keyboard.KEY_N, false);
+    public static final KeyBinding FLY_TOGGLE = new KeyBinding("fly_toggle", "Toggle Flying", Keyboard.KEY_V, true);
+    public static final KeyBinding NOCLIP_TOGGLE = new KeyBinding("noclip_toggle", "Toggle Noclip", Keyboard.KEY_N, true);
     public static final KeyBinding FLY_SPEED_MODIFIER = new KeyBinding("fly_speed_modifier", "Fly Speed Modifier", Keyboard.KEY_LCONTROL, false);
 
     // interaction: BREAK_BLOCK / PLACE_BLOCK are read via isDown() in PlayerInteraction.tick, so mouse rebinding works
-    // PICK_BLOCK / CYCLE_TREE are compared via getKey() (keyboard only) in InputHandler
+    // PICK_BLOCK / INTERACT / KNOCK are mouse-bindable too, but InputHandler must match them with matchesKeyEvent / matchesMouseEvent
     public static final KeyBinding BREAK_BLOCK = new KeyBinding("break_block", "Break Block", Device.MOUSE, 0, true);
     public static final KeyBinding PLACE_BLOCK = new KeyBinding("place_block", "Place Block", Device.MOUSE, 1, true);
-    public static final KeyBinding PICK_BLOCK = new KeyBinding("pick_block", "Pick Block", Keyboard.KEY_LMENU, false);
-    public static final KeyBinding INTERACT = new KeyBinding("interact", "Interact", Keyboard.KEY_E, false);
-    public static final KeyBinding KNOCK = new KeyBinding("knock", "Secondary Interaction", Keyboard.KEY_Q, false);   // knocks on a door, or (a secret) pats another player. the id stays "knock" so saved keybinds.txt files still load
+    public static final KeyBinding PICK_BLOCK = new KeyBinding("pick_block", "Pick Block", Keyboard.KEY_LMENU, true);
+    public static final KeyBinding INTERACT = new KeyBinding("interact", "Interact", Keyboard.KEY_E, true);
+    public static final KeyBinding PLACE_RAGDOLL = new KeyBinding("place_ragdoll", "Place Ragdoll", Keyboard.KEY_G, true);   // puts a ragdoll down where the crosshair is, then it is carried, turned and thrown like a cube
+    public static final KeyBinding KNOCK = new KeyBinding("knock", "Secondary Interaction", Keyboard.KEY_Q, true);   // knocks on a door, or (a secret) pats another player. the id stays "knock" so saved keybinds.txt files still load
 
     // interface: all compared via getKey() (keyboard only) in InputHandler
     // INVENTORY / CHAT are also compared by InventoryScreen / ChatScreen, so the same key closes / is ignored on open
     public static final KeyBinding INVENTORY = new KeyBinding("inventory", "Open Inventory", Keyboard.KEY_TAB, false);
     public static final KeyBinding CHAT = new KeyBinding("chat", "Open Chat", Keyboard.KEY_T, false);
     public static final KeyBinding CONSOLE = new KeyBinding("console", "Open Console", UNBOUND, false);
-    public static final KeyBinding DEBUG_HUD = new KeyBinding("debug_hud", "Toggle Debug Info", Keyboard.KEY_F3, false);
-    public static final KeyBinding SCREENSHOT = new KeyBinding("screenshot", "Screenshot", Keyboard.KEY_F2, false);
-    public static final KeyBinding CAMERA_VIEW = new KeyBinding("camera_view", "Change Camera View", Keyboard.KEY_F5, false);
+    public static final KeyBinding DEBUG_HUD = new KeyBinding("debug_hud", "Toggle Debug Info", Keyboard.KEY_F3, true);
+    public static final KeyBinding SCREENSHOT = new KeyBinding("screenshot", "Screenshot", Keyboard.KEY_F2, true);
+    public static final KeyBinding CAMERA_VIEW = new KeyBinding("camera_view", "Change Camera View", Keyboard.KEY_F5, true);
 
     private final String id;
     private final String displayName;
@@ -254,6 +255,32 @@ public class KeyBinding {
         if (!primaryDown) {
             return false;
         }
+        if (this.modifierDevice == null) {
+            return true;
+        }
+        return this.modifierDevice == Device.KEYBOARD ? Keyboard.isKeyDown(this.modifierCode) : Mouse.isButtonDown(this.modifierCode);
+    }
+
+    /**
+     * for event loops: true if this keyboard event (a key that was just pressed) is this binding. unlike getKey() it
+     * ignores mouse bindings and checks the modifier, so a binding on a mouse button never matches a key by number
+     */
+    public boolean matchesKeyEvent(int eventKey) {
+        if (this.code == UNBOUND || this.device != Device.KEYBOARD || eventKey != this.code) {
+            return false;
+        }
+        return modifierHeld();
+    }
+
+    /** for event loops: true if this mouse button event (a button that was just pressed) is this binding */
+    public boolean matchesMouseEvent(int eventButton) {
+        if (this.code == UNBOUND || this.device != Device.MOUSE || eventButton != this.code) {
+            return false;
+        }
+        return modifierHeld();
+    }
+
+    private boolean modifierHeld() {
         if (this.modifierDevice == null) {
             return true;
         }

@@ -8,6 +8,7 @@ import com.nikohalfkino.rubydung.interfaces.widget.Anchor;
 import com.nikohalfkino.rubydung.interfaces.widget.Label;
 import com.nikohalfkino.rubydung.interfaces.widget.ProgressBar;
 import com.nikohalfkino.rubydung.level.LevelRenderer;
+import com.nikohalfkino.rubydung.render.ShaderWarmup;
 import com.nikohalfkino.rubydung.level.generation.WorldGenStatus;
 
 public class LoadingScreen extends Screen {
@@ -70,6 +71,9 @@ public class LoadingScreen extends Screen {
 
     @Override
     public void render(int mouseX, int mouseY) {
+        // one shader program per frame, so none is compiled in the middle of the first world frame
+        ShaderWarmup.step();
+
         if (this.levelRenderer == null) {
             super.render(mouseX, mouseY);   // the level is still being made, only the step text moves
             return;
@@ -78,6 +82,7 @@ public class LoadingScreen extends Screen {
         // workers build the meshes, this thread only turns finished ones into display lists
         boolean more = this.levelRenderer.uploadBuiltChunks(Integer.MAX_VALUE, System.nanoTime() + BUILD_BUDGET_NANOS);
         if (!more) {
+            ShaderWarmup.finish();   // whatever is left (a fast load), before the first world frame
             System.out.println("[loading] built all chunks in " + (System.nanoTime() - this.startNanos) / 1_000_000L + " ms");
             this.game.finishedLoadingWorld();
             return;

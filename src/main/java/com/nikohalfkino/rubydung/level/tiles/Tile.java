@@ -86,6 +86,8 @@ public class Tile {
     public static Tile      byName(String name)  { return TileRegistry.byName(name); }
     public static List<Tile> getTiles()          { return TileRegistry.getTiles(); }
     public static List<Tile> getCycleOrder()     { return TileRegistry.getCycleOrder(); }
+    public static List<Tile> getCycleGroup(Tile tile) { return TileRegistry.getCycleGroup(tile); }
+    public static boolean    isGadget(Tile tile) { return TileRegistry.isGadget(tile); }
 
     public final int id;
     public final String name;

@@ -23,11 +23,19 @@ public class Frustum {
 
     private static Frustum frustum = new Frustum();
 
+    // false until calculateFrustum() has run for the matrices now in use; invalidate() clears it
+    private static boolean valid = false;
+
     float[][] m_Frustum = new float[6][4];
 
     FloatBuffer modl_b;
 
     FloatBuffer proj_b;
+
+    // scratch arrays, reused (calculateFrustum used to allocate three float[16] per call)
+    private final float[] proj = new float[16];
+    private final float[] modl = new float[16];
+    private final float[] clip = new float[16];
 
 
     public Frustum() {
@@ -35,9 +43,21 @@ public class Frustum {
         proj_b = BufferUtils.createFloatBuffer(16);
     }
 
+    /**
+     * the frustum of the camera's matrices. it is worked out once per set of matrices (two glGetFloat readbacks), then
+     * handed out as it is: call invalidate() whenever the projection or view matrix is replaced (GameRenderer.renderWorld does,
+     * right after it loads them). the first call after that reads the matrices again
+     */
     public static Frustum getFrustum() {
-        Frustum.frustum.calculateFrustum();
+        if (!valid) {
+            Frustum.frustum.calculateFrustum();
+        }
         return Frustum.frustum;
+    }
+
+    /** the camera's matrices changed: the next getFrustum() works it out again */
+    public static void invalidate() {
+        valid = false;
     }
 
     public void normalizePlane(float[][] frustum, int side) {
@@ -52,10 +72,9 @@ public class Frustum {
 
 
     public void calculateFrustum() {
-        float[] proj = new float[16];
-        float[] modl = new float[16];
-        float[] clip = new float[16];
-
+        float[] proj = this.proj;
+        float[] modl = this.modl;
+        float[] clip = this.clip;
 
         proj_b.rewind();
         glGetFloat(GL_PROJECTION_MATRIX, proj_b);
@@ -128,6 +147,9 @@ public class Frustum {
         m_Frustum[FRONT][D] = clip[15] + clip[14];
 
         normalizePlane(m_Frustum, FRONT);
+        if (this == Frustum.frustum) {
+            valid = true;
+        }
     }
 
     public boolean pointInFrustum(float x, float y, float z) {

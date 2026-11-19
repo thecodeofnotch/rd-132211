@@ -17,7 +17,15 @@ public final class SaveQueue {
     }
 
     public static void submit(Runnable job) {
-        EXEC.submit(job);
+        EXEC.submit(() -> {
+            try {
+                job.run();
+            } catch (Throwable t) {
+                // submit() would keep this inside a Future nobody reads, so a failed save was silent
+                System.err.println("[save] a save job failed: " + t);
+                t.printStackTrace();
+            }
+        });
     }
 
     /** blocks until everything queued so far has been written */

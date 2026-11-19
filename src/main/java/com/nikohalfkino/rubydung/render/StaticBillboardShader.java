@@ -41,12 +41,15 @@ public final class StaticBillboardShader {
                     "    float d = distance(uEye, pivot);\n" +
                     "    gl_TexCoord[0] = gl_MultiTexCoord0;\n" +
                     "    vColor = gl_Color;\n" +
-                    "    vAuraArea = gl_MultiTexCoord2;\n" +
-                    "    vAuraColor = gl_MultiTexCoord3;\n" +
-                    "    vAuraBands = gl_MultiTexCoord4.xyw;\n" +
-                    "    vAuraRim = gl_MultiTexCoord5;\n" +
-                    "    vAuraCore = gl_MultiTexCoord6;\n" +
-                    "    vAuraBlend = gl_MultiTexCoord4.z;\n" +
+                    // the sprites come from meshes without aura data (texture units 2 to 6 are not bound), only the glows read them
+                    "    if (uAuraPass > 0.5) {\n" +
+                    "        vAuraArea = gl_MultiTexCoord2;\n" +
+                    "        vAuraColor = gl_MultiTexCoord3;\n" +
+                    "        vAuraBands = gl_MultiTexCoord4.xyw;\n" +
+                    "        vAuraRim = gl_MultiTexCoord5;\n" +
+                    "        vAuraCore = gl_MultiTexCoord6;\n" +
+                    "        vAuraBlend = gl_MultiTexCoord4.z;\n" +
+                    "    }\n" +
                     "    vWorldY = pivot.y;\n" +
                     "    vFogWorldXZ = pivot.xz;\n" +
                     "    bool gone = d > min(uReach.y, corner.z * uReach.x);\n" +
@@ -219,6 +222,13 @@ public final class StaticBillboardShader {
 
     public static void unbind() {
         GL20.glUseProgram(0);
+    }
+
+    /** compiles and links the program now (it is otherwise built on its first use, in the middle of a frame): called from ShaderWarmup while the world loads */
+    public static void warmUp() {
+        if (program == 0) {
+            init();
+        }
     }
 
     private static void init() {

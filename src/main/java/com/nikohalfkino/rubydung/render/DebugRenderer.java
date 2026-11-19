@@ -10,6 +10,8 @@ import static org.lwjgl.opengl.GL11.*;
 /**
  * Debug overlays drawn in world space, after the world and with the camera's matrices still active:
  * the chunk borders around the camera and the player's movement vectors.
+ *
+ * the vectors are drawn like the ragdoll overlay: antialiased lines with an arrow head, faint through everything and clear where nothing is in front, and pixelated (through an OverlayLayer) when the pixelation filter is off. the chunk borders are plain lines: they lie exactly on block faces and rely on a depth trick the small buffer's depth can not keep
  */
 public class DebugRenderer {
 
@@ -19,8 +21,12 @@ public class DebugRenderer {
     // The chunk border lines lie exactly on block faces, so they are drawn a hair closer than the terrain to not z-fight with it.
     private static final double LINE_DEPTH_RANGE = 0.99997;
 
-    // half the length of the cross drawn on the tip of a vector
-    private static final double TIP_SIZE = 0.08;
+    // the arrow head on the tip of a vector: the same size as the arrows of the ragdoll overlay (RagdollOverlay)
+    private static final double HEAD_BACK = 0.1;
+    private static final double HEAD_SIDE = 0.055;
+
+    // how strongly the vectors show through everything (the clear pass, where nothing is in front, is 1)
+    private static final float THROUGH_STRENGTH = 0.25F;
 
     private boolean chunkBorders = false;
     private boolean vectors = false;
@@ -68,7 +74,7 @@ public class DebugRenderer {
     }
 
     public void render(Level level, Player player, double camX, double camY, double camZ, float partialTicks) {
-        if (!isActive() || level == null) {
+        if (!this.chunkBorders || level == null) {
             return;
         }
 
@@ -85,12 +91,49 @@ public class DebugRenderer {
             if (this.chunkBorders) {
                 drawChunkBorders(level, camX, camY, camZ);
             }
-            if (this.vectors) {
-                drawVectors(player, camX, camY, camZ, partialTicks);
-            }
         } finally {
             glDepthRange(0.0, 1.0);
             glPopAttrib();
+        }
+    }
+
+    /** the movement vectors, through the layer (see the class comment). call after render(), with the camera's matrices active */
+    public void renderVectors(OverlayLayer layer, boolean pixelationOn, Player player,
+                              double camX, double camY, double camZ, float partialTicks) {
+        if (!this.vectors || player == null) {
+            return;
+        }
+
+        boolean inLayer = layer.begin(pixelationOn);
+        glPushAttrib(GL_ENABLE_BIT | GL_LINE_BIT | GL_CURRENT_BIT | GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        try {
+            glDisable(GL_TEXTURE_2D);
+            glDisable(GL_FOG);
+            glDisable(GL_ALPHA_TEST);
+            glDisable(GL_CULL_FACE);
+            glEnable(GL_BLEND);
+            layer.blend();
+            glDepthMask(false);
+            glEnable(GL_LINE_SMOOTH);
+            glHint(GL_LINE_SMOOTH_HINT, GL_NICEST);
+
+            for (int pass = 0; pass < 2; pass++) {
+                float strength;
+                if (pass == 0) {
+                    glDisable(GL_DEPTH_TEST);
+                    strength = THROUGH_STRENGTH;
+                } else {
+                    glEnable(GL_DEPTH_TEST);
+                    glDepthFunc(GL_LEQUAL);
+                    strength = 1.0F;
+                }
+                drawVectors(player, camX, camY, camZ, partialTicks, strength);
+            }
+        } finally {
+            glPopAttrib();
+            if (inLayer) {
+                layer.end();
+            }
         }
     }
 
@@ -175,7 +218,7 @@ public class DebugRenderer {
 
     // ---- movement vectors ----
 
-    private void drawVectors(Player player, double camX, double camY, double camZ, float partialTicks) {
+    private void drawVectors(Player player, double camX, double camY, double camZ, float partialTicks, float strength) {
         PlayerPhysics physics = player.getPhysics();
 
         // the player's eye position, blended between the last two ticks like the camera does
@@ -186,9 +229,6 @@ public class DebugRenderer {
         double feetY = py - Player.EYE_HEIGHT;
         double centerY = feetY + PlayerPhysics.HEIGHT * 0.5;
 
-        // always on top, they are about the player
-        glDisable(GL_DEPTH_TEST);
-
         // the hull, skipped when the camera is inside it (first person)
         double half = PlayerPhysics.HALF_WIDTH;
         boolean cameraInside = Math.abs(camX - px) < half + 0.05
@@ -197,36 +237,59 @@ public class DebugRenderer {
         if (!cameraInside) {
             glLineWidth(2.0F);
             if (physics.isOnGround()) {
-                glColor4f(1.0F, 0.6F, 0.1F, 1.0F);
+                glColor4f(1.0F, 0.6F, 0.1F, strength);
             } else {
-                glColor4f(1.0F, 1.0F, 1.0F, 0.8F);
+                glColor4f(1.0F, 1.0F, 1.0F, 0.8F * strength);
             }
             box(px - half, feetY, pz - half, px + half, feetY + PlayerPhysics.HEIGHT, pz + half);
         }
 
-        glLineWidth(3.0F);
-        vector(px, centerY, pz, physics.getWishVelocity(), 0.2F, 1.0F, 0.3F);   // green: what the inputs ask for
-        vector(px, centerY, pz, physics.velocity, 0.2F, 0.9F, 1.0F);            // cyan: the velocity the physics holds
-        vector(px, centerY, pz, physics.getMovedVelocity(), 1.0F, 0.3F, 1.0F);  // magenta: how far it really moved
+        vector(px, centerY, pz, physics.getWishVelocity(), 0.2F, 1.0F, 0.3F, strength);   // green: what the inputs ask for
+        vector(px, centerY, pz, physics.velocity, 0.2F, 0.9F, 1.0F, strength);            // cyan: the velocity the physics holds
+        vector(px, centerY, pz, physics.getMovedVelocity(), 1.0F, 0.3F, 1.0F, strength);  // magenta: how far it really moved
     }
 
-    private void vector(double x, double y, double z, double[] v, float r, float g, float b) {
+    // an arrow from (x, y, z) along v (blocks per second): a thick antialiased shaft and a four-barbed head on the tip, like the arrows of RagdollOverlay
+    private void vector(double x, double y, double z, double[] v, float r, float g, float b, float strength) {
         double length = Math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
         if (length < 1.0E-3) {
             return;
         }
 
-        double ex = x + v[0] * this.vectorSeconds;
-        double ey = y + v[1] * this.vectorSeconds;
-        double ez = z + v[2] * this.vectorSeconds;
+        double dx = v[0] / length;
+        double dy = v[1] / length;
+        double dz = v[2] / length;
+        double reach = length * this.vectorSeconds;
+        double ex = x + dx * reach;
+        double ey = y + dy * reach;
+        double ez = z + dz * reach;
 
-        glColor4f(r, g, b, 1.0F);
+        glLineWidth(2.5F);
+        glColor4f(r, g, b, 0.75F * strength);
         glBegin(GL_LINES);
         line(x, y, z, ex, ey, ez);
-        // a small cross on the tip, so the end of the vector is easy to find
-        line(ex - TIP_SIZE, ey, ez, ex + TIP_SIZE, ey, ez);
-        line(ex, ey - TIP_SIZE, ez, ex, ey + TIP_SIZE, ez);
-        line(ex, ey, ez - TIP_SIZE, ex, ey, ez + TIP_SIZE);
+        glEnd();
+
+        // two directions at right angles to the arrow and to each other, for the barbs
+        double hx = Math.abs(dy) < 0.95 ? 0.0 : 1.0;
+        double hy = Math.abs(dy) < 0.95 ? 1.0 : 0.0;
+        double s1x = dy * 0.0 - dz * hy;
+        double s1y = dz * hx - dx * 0.0;
+        double s1z = dx * hy - dy * hx;
+        double sl = Math.sqrt(s1x * s1x + s1y * s1y + s1z * s1z);
+        s1x /= sl;
+        s1y /= sl;
+        s1z /= sl;
+        double s2x = dy * s1z - dz * s1y;
+        double s2y = dz * s1x - dx * s1z;
+        double s2z = dx * s1y - dy * s1x;
+
+        // a short vector has a smaller head, so the head never outgrows the shaft
+        double fit = Math.min(1.0, reach / (HEAD_BACK * 2.0));
+        glLineWidth(2.0F);
+        glColor4f(r, g, b, 0.9F * strength);
+        glBegin(GL_LINES);
+        OverlayLayer.arrowBarbs(ex, ey, ez, dx, dy, dz, s1x, s1y, s1z, s2x, s2y, s2z, HEAD_BACK * fit, HEAD_SIDE * fit);
         glEnd();
     }
 

@@ -4,6 +4,7 @@ import com.nikohalfkino.rubydung.audio.SoundEffects;
 import com.nikohalfkino.rubydung.interfaces.hud.HandHud;
 import com.nikohalfkino.rubydung.level.tiles.special.ChessPieceTile;
 import com.nikohalfkino.rubydung.level.tiles.special.CubeTile;
+import com.nikohalfkino.rubydung.level.tiles.special.ColoredDiceTile;
 import com.nikohalfkino.rubydung.level.tiles.special.DiceTile;
 import com.nikohalfkino.rubydung.level.tiles.special.LiquidTile;
 import com.nikohalfkino.rubydung.level.tiles.Tile;
@@ -50,7 +51,7 @@ final class BlockReplacer extends BlockAction {
 
         Tile selected = this.ctx.selectedTile;
 
-        if (selected instanceof CubeTile || selected instanceof DiceTile || selected instanceof ChessPieceTile) {
+        if (selected instanceof CubeTile || selected instanceof DiceTile || selected instanceof ColoredDiceTile || selected instanceof ChessPieceTile) {
             return false; // a weighted cube, a dice and a chess piece are bodies, never a block to swap in
         }
 

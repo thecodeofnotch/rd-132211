@@ -291,6 +291,10 @@ public class SkyboxRenderer {
     private final float[] ringG = new float[LATITUDE_SEGMENTS + 1];
     private final float[] ringB = new float[LATITUDE_SEGMENTS + 1];
 
+    // how fast the dome goes from the horizon colour to the nadir colour looking down (it was 0.75, which is already a quarter of the
+    // way there 10 degrees below the horizon). higher = the horizon colour reaches further down
+    private static final double NADIR_BLEND_EXPONENT = 1.6D;
+
     private void computeRingColors() {
         float[] zenith  = cycle.getZenithColor();
         float[] horizon = cycle.getHorizonColor();
@@ -309,7 +313,9 @@ public class SkyboxRenderer {
                 g = lerp(horizon[1], zenith[1], t);
                 b = lerp(horizon[2], zenith[2], t);
             } else {
-                float t = (float) Math.pow(-y / SKY_RADIUS, 0.75);
+                // the sea's far edge (where the fog ends) is seen a few degrees below the horizon: a higher exponent keeps the
+                // dome at the horizon colour down to there, so it matches the fog instead of showing a lighter band under it
+                float t = (float) Math.pow(-y / SKY_RADIUS, NADIR_BLEND_EXPONENT);
 
                 r = lerp(horizon[0], nadir[0], t);
                 g = lerp(horizon[1], nadir[1], t);

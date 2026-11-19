@@ -7,7 +7,7 @@ import java.util.Random;
 /**
  * a dice is a cube that shows a number after a throw: it rolls instead of settling at once, takes a random knock on every hit, and tracks when a throw has ended (see trackRoll). the spin is fake, so it is tuned to make the result depend on the whole throw instead of the first touch
  *
- * its piece code uses the negative codes, so the save file and the network need no new field: -1 is a plain cube (WeightedCube), -2 a dice that has not rolled, -3 .. -8 a dice that shows 1 .. 6
+ * its piece code uses the negative codes, so the save file and the network need no new field: -1 is a plain cube (WeightedCube), -2 a dice that has not rolled, -3 .. -8 a dice that shows 1 .. 6. a dice has a colour (see Color), and the colour is in the code as well: the red ones are -32 (not rolled) and -33 .. -38, the blue ones -40 and -41 .. -46. -16 .. -31 are the ragdolls, see Ragdoll.isRagdollCode
  */
 public final class Dice extends PhysCube {
 
@@ -16,7 +16,29 @@ public final class Dice extends PhysCube {
         void rolled(Dice dice, int value, int holderId);
     }
 
-    public static final int CODE_IDLE = -2;
+    /** what a dice is made of. the translucent ones are drawn blended (see CubeRenderer) */
+    public enum Color {
+        WHITE(-2, "", "White", false),
+        RED(-32, "_red", "Red", true),
+        BLUE(-40, "_blue", "Blue", true);
+
+        /** the piece code of a dice of this colour that has not rolled: it shows a number n with idleCode - n */
+        public final int idleCode;
+        /** what goes after dice1 .. dice6 in the name of its textures */
+        public final String textureSuffix;
+        public final String displayName;
+        public final boolean translucent;
+
+        Color(int idleCode, String textureSuffix, String displayName, boolean translucent) {
+            this.idleCode = idleCode;
+            this.textureSuffix = textureSuffix;
+            this.displayName = displayName;
+            this.translucent = translucent;
+        }
+    }
+
+    /** the code of a white dice that has not rolled */
+    public static final int CODE_IDLE = Color.WHITE.idleCode;
 
     private static final Random RNG = new Random();
     private static final double GROUND_FRICTION = 3.0D;   // lower than a cube's so the roll lasts
@@ -50,10 +72,36 @@ public final class Dice extends PhysCube {
     public int restTicks;
     public int rollTicks;
 
-    private int code = CODE_IDLE;
+    private final Color color;
+
+    // the number it shows, 0 = it has not rolled
+    private int shown;
 
     public Dice(double x, double y, double z) {
+        this(x, y, z, Color.WHITE);
+    }
+
+    public Dice(double x, double y, double z, Color color) {
         super(EntityTypes.DICE, x, y, z);
+        this.color = color;
+    }
+
+    public Color color() {
+        return this.color;
+    }
+
+    /** the colour of the dice a piece code is of, null if it is not one of a dice */
+    public static Color colorOf(int code) {
+        for (Color c : Color.values()) {
+            if (code <= c.idleCode && code >= c.idleCode - 6) {
+                return c;
+            }
+        }
+        return null;
+    }
+
+    public static boolean isDiceCode(int code) {
+        return colorOf(code) != null;
     }
 
     public static double[] randomSpin(Random random) {
@@ -73,23 +121,29 @@ public final class Dice extends PhysCube {
 
     @Override
     public int pieceCode() {
-        return this.code;
+        return this.color.idleCode - this.shown;
     }
 
     @Override
     public void applyPieceCode(int code) {
-        if (code <= CODE_IDLE) {
-            this.code = Math.max(code, codeOf(6));
+        // the colour never changes, a code of another colour is none of ours
+        if (colorOf(code) == this.color) {
+            this.shown = this.color.idleCode - code;
         }
     }
 
     /** the number the dice shows, 0 if it has not rolled */
     public int diceValue() {
-        return this.code < CODE_IDLE ? CODE_IDLE - this.code : 0;
+        return this.shown;
     }
 
+    /** the piece code of a white dice that shows value (CODE_IDLE if it is not 1 .. 6) */
     public static int codeOf(int value) {
-        return value < 1 || value > 6 ? CODE_IDLE : CODE_IDLE - value;
+        return codeOf(Color.WHITE, value);
+    }
+
+    public static int codeOf(Color color, int value) {
+        return value < 1 || value > 6 ? color.idleCode : color.idleCode - value;
     }
 
     /**
@@ -164,7 +218,7 @@ public final class Dice extends PhysCube {
             this.lastHolder = this.heldBy;
             this.rollArmed = false;
             this.restTicks = 0;
-            this.code = CODE_IDLE;
+            this.shown = 0;
             return;
         }
 
@@ -192,7 +246,7 @@ public final class Dice extends PhysCube {
         if (this.restTicks >= REST_TICKS) {
             this.rollArmed = false;
             int value = upFaceValue();
-            this.code = codeOf(value);
+            this.shown = value;
             if (listener != null) {
                 listener.rolled(this, value, this.lastHolder);
             }

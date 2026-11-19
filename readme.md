@@ -35,4 +35,6 @@ Full license texts are in `jtalk/common/voice/` inside the game folder.
 
 ## Contributors
 
-- **ZLD1**
+- **ZLD1** - Texturework help
+- **Dr. Smaul** - 3D Modeling for the main characters
+- **asof** - Groundwork for [custom block model loading](https://github.com/epicanemone28/Strata/tree/model-loader)

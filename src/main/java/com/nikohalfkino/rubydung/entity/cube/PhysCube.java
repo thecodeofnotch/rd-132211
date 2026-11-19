@@ -1,8 +1,7 @@
 package com.nikohalfkino.rubydung.entity.cube;
 
-import com.nikohalfkino.rubydung.audio.BodySounds;
 import com.nikohalfkino.rubydung.entity.EntityType;
-import com.nikohalfkino.rubydung.entity.WorldEntity;
+import com.nikohalfkino.rubydung.entity.phys.PhysEntity;
 
 import java.util.List;
 
@@ -13,7 +12,7 @@ import java.util.List;
  *
  * this class knows nothing about the level or OpenGL: the manager hands it the boxes to collide with, which is also what makes it testable on its own
  */
-public abstract class PhysCube extends WorldEntity {
+public abstract class PhysCube extends PhysEntity {
 
     /** half the edge of the cube, in blocks: a full tile. the collision skin (SKIN) and the overlap tolerance keep a cube that fills a cell exactly from snagging on the walls of it */
     public static final double HALF = 0.5D;
@@ -44,58 +43,15 @@ public abstract class PhysCube extends WorldEntity {
     protected static final double SPIN_DAMP_AIR = 0.25D;    // 1/s
 
     // ---------------------------------------------------------------- state
-
-    // angular velocity, radians per second about the world axes
-    public double avx, avy, avz;
-
-    /** what it hit during its last tick: a player's body (null = none) and how hard (blocks/s). set by tick(), read by CubeManager */
-    public CollisionBox hitBody;
-    public double hitSpeed;
-    /** how hard it hit the world (a wall, the floor) or another cube during its last tick (blocks/s), 0 = nothing. set by tick(), read by CubeManager */
-    public double bumpSpeed;
-    /** ticks until a bump is heard again */
-    public int bumpCooldown;
-
-    /** ticks until it may hit somebody audibly again (it rests against them, it should not rattle) */
-    public int hitCooldown;
+    // what it has in common with the other bodies (spin, what it hit, who carries it) is in PhysEntity
 
     /**
      * set by pushHorizontal, cleared at the end of the tick: something (a body) is still shoving it this tick. a cube that is shoved into a wall is pinned, not thrown at it: no bounce, no kick of spin, no bump sound
      */
     private boolean pushedThisTick;
 
-    /** the splash when it goes into water (see BodySounds, CubeManager.tick) */
-    public final BodySounds sounds = new BodySounds();
-
-    /** carried by the player: pulled toward (targetX, targetY, targetZ), blocked by the world but not by the player */
-    public boolean held;
-    public double targetX, targetY, targetZ;
-    /** the player's own velocity, added to the pull so the cube keeps up when walking */
-    public double followVx, followVy, followVz;
-
-    /**
-     * the player is not an obstacle (and the cube is none for the player): set when it is let go of or thrown, until it has cleared the player. without it a cube dropped onto the player's feet would trap them
-     */
-    public boolean ignorePlayer;
-
-    // ---------------------------------------------------------------- multiplayer
-
-    /** server: id of the connected player carrying it (see GameServer), -1 if none. a LAN host carrying it only sets held */
-    public int heldBy = -1;
-
-    /** client: somebody else carries it. it is not solid and cannot be picked up, the server moves it */
-    public boolean remoteHeld;
-
-    /** server: like ignorePlayer, for the other players' bodies */
-    public boolean ignoreBodies;
-
     protected PhysCube(EntityType type, double x, double y, double z) {
         super(type, x, y, z);
-    }
-
-    @Override
-    protected boolean extrapolatesReplica() {
-        return !this.remoteHeld;
     }
 
     // ---------------------------------------------------------------- hull
@@ -151,6 +107,7 @@ public abstract class PhysCube extends WorldEntity {
     }
 
     /** it is in a liquid and buoyant enough not to sink: it rides at the surface and does not come to rest on anything */
+    @Override
     public boolean isFloating() {
         return this.inLiquid && buoyancy() > LIQUID_GRAVITY;
     }
@@ -169,6 +126,7 @@ public abstract class PhysCube extends WorldEntity {
     /**
      * one tick. obstacles are everything it may hit (world boxes, the other cubes, the player unless ignored), already collected for the region it can reach this tick, see reach()
      */
+    @Override
     public void tick(List<CollisionBox> obstacles) {
         this.prevX = this.x;
         this.prevY = this.y;
@@ -196,6 +154,7 @@ public abstract class PhysCube extends WorldEntity {
     }
 
     /** how far (per axis, in blocks) the cube can move in one tick at most, for collecting the obstacles */
+    @Override
     public double reach() {
         return Math.max(1.0D, speed() * DT * 1.5D + 0.5D);
     }
@@ -284,11 +243,13 @@ public abstract class PhysCube extends WorldEntity {
     }
 
     /** moves the cube along the ground by (dx, dz) with collision, without touching its speed on purpose: what a cube standing on a carried one is taken along by */
+    @Override
     public void carryBy(List<CollisionBox> obstacles, double dx, double dz) {
         moveWithCollision(obstacles, dx, 0.0D, dz, false);
     }
 
     /** a player walks into it: it is set moving along one horizontal axis (0 = x, 2 = z) up to the given speed */
+    @Override
     public void pushHorizontal(int axis, double speed) {
         this.pushedThisTick = true;
         if (axis == 0) {
@@ -298,6 +259,11 @@ public abstract class PhysCube extends WorldEntity {
         } else if (Math.abs(speed) > Math.abs(this.vz) || speed * this.vz < 0.0D) {
             this.vz = speed;
         }
+    }
+
+    @Override
+    public void markPushed() {
+        this.pushedThisTick = true;
     }
 
     // moves the centre by (dx, dy, dz), one axis at a time (y first so landing is found before sliding) and stops at obstacles
@@ -373,7 +339,7 @@ public abstract class PhysCube extends WorldEntity {
 
         // moving up into a cube that lies on this one lifts it: the stack goes up together, it is not a hit
         if (axis == 1 && delta > 0.0D && !this.held && blocker.owner != null && !blocker.owner.held && speed > 0.0D) {
-            PhysCube above = blocker.owner;
+            PhysEntity above = blocker.owner;
             if (speed > above.vy) {
                 above.vy = speed;
                 above.onGround = false;
@@ -387,7 +353,7 @@ public abstract class PhysCube extends WorldEntity {
         if (!this.held) {
             // hitting another cube sideways gives it a push and costs this one some speed
             if (blocker.owner != null && axis != 1 && !blocker.owner.held) {
-                PhysCube other = blocker.owner;
+                PhysEntity other = blocker.owner;
                 double along = other.axisSpeed(axis);
                 double push = speed * 0.6D;
                 if (Math.abs(push) > Math.abs(along) && push * speed > 0.0D) {
@@ -399,8 +365,8 @@ public abstract class PhysCube extends WorldEntity {
                 hitSurface(axis, speed, bounce);
             }
         } else {
-            // a carried cube shoves the cubes in its way (sideways, and up: it can lift one that lies on it), it is stopped by them
-            if (blocker.owner != null && !blocker.owner.held) {
+            // a carried cube shoves the cubes in its way (sideways, and up: it can lift one that lies on it), it is stopped by them. a body made of parts (a ragdoll) is not shoved: the cube is blocked by it, and the ragdoll only feels what it really touches
+            if (blocker.owner != null && !blocker.owner.held && blocker.owner.partCount() <= 1) {
                 shove(blocker.owner, axis, speed);
             }
             setAxisSpeed(axis, 0.0D);
@@ -408,15 +374,16 @@ public abstract class PhysCube extends WorldEntity {
     }
 
     // a shoved cube pushes the one in front of it along at its own speed, without the impact of a hit
-    private void shoveNeighbour(PhysCube other, int axis, double speed) {
+    private void shoveNeighbour(PhysEntity other, int axis, double speed) {
         double along = other.axisSpeed(axis);
         if (Math.abs(speed) > Math.abs(along) || speed * along < 0.0D) {
             other.setAxisSpeed(axis, speed);
         }
-        other.pushedThisTick = true;
+        other.markPushed();
     }
 
     /** moves the cube by (dx, dy, dz) with collision, without touching its speed. returns how far it really went along y */
+    @Override
     public double carryBy(List<CollisionBox> obstacles, double dx, double dy, double dz) {
         double before = this.y;
         moveWithCollision(obstacles, dx, dy, dz, false);
@@ -424,11 +391,12 @@ public abstract class PhysCube extends WorldEntity {
     }
 
     /** puts the cube back down by amount (it was carried up further than the stack on it could go) */
+    @Override
     public void lowerBy(double amount) {
         this.y -= amount;
     }
 
-    private void shove(PhysCube other, int axis, double speed) {
+    private void shove(PhysEntity other, int axis, double speed) {
         if (axis == 1 && speed < 0.0D) {
             return;   // pressing down on a cube: it is held up by whatever it lies on
         }
@@ -442,11 +410,13 @@ public abstract class PhysCube extends WorldEntity {
         }
     }
 
-    protected double axisSpeed(int axis) {
+    @Override
+    public double axisSpeed(int axis) {
         return axis == 0 ? this.vx : axis == 1 ? this.vy : this.vz;
     }
 
-    protected void setAxisSpeed(int axis, double value) {
+    @Override
+    public void setAxisSpeed(int axis, double value) {
         if (axis == 0) {
             this.vx = value;
         } else if (axis == 1) {

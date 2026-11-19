@@ -3,6 +3,11 @@ package com.nikohalfkino.rubydung.entity;
 import com.nikohalfkino.rubydung.entity.cube.CollisionBox;
 import com.nikohalfkino.rubydung.entity.cube.Dice;
 import com.nikohalfkino.rubydung.entity.cube.PhysCube;
+import com.nikohalfkino.rubydung.entity.phys.GrabPick;
+import com.nikohalfkino.rubydung.entity.phys.ParticleBody;
+import com.nikohalfkino.rubydung.entity.phys.ParticleEntity;
+import com.nikohalfkino.rubydung.entity.phys.PhysEntity;
+import com.nikohalfkino.rubydung.entity.ragdoll.Ragdoll;
 import com.nikohalfkino.rubydung.entity.cube.WeightedCube;
 import com.nikohalfkino.rubydung.entity.piece.ChessPiece;
 import com.nikohalfkino.rubydung.entity.piece.MovablePiece;
@@ -28,7 +33,7 @@ import java.util.function.Supplier;
 /**
  * every world entity of one level: the weighted cubes, the dice and the chess pieces. it spawns them, runs the physics of the cubes once per tick, answers "what is the crosshair on" and "what does the player bump into", and saves them next to the level
  *
- * the cubes (PhysCube) are solid for the player through Level.getCubes (see addCollisionBoxes), and the player is solid for them here
+ * the cubes (PhysEntity) are solid for the player through Level.getCubes (see addCollisionBoxes), and the player is solid for them here
  *
  * the chess pieces (ChessPiece) are not bodies, nothing pushes them or collides with them, they only stand on their square, glide to another when told to (movePiece) and are picked with raycastPiece. they travel to the players, are saved and removed like the cubes
  */
@@ -39,6 +44,31 @@ public final class CubeManager {
 
     /** a cap on the chess pieces (two full sets is 32), they cost nothing per tick */
     public static final int MAX_PIECES = EntityTypes.groupCap(EntityTypes.GROUP_PIECES);
+
+    /** a cap on the ragdolls (they count against the cube cap too): they are drawn as meshes of a thousand triangles */
+    public static final int MAX_RAGDOLLS = 16;
+
+    /** what spawnIn puts into a cell */
+    public static final int KIND_CUBE = 0;
+    public static final int KIND_DICE = 1;
+    public static final int KIND_RAGDOLL = 2;
+    public static final int KIND_DICE_RED = 3;
+    public static final int KIND_DICE_BLUE = 4;
+    public static final int KINDS = 5;
+
+    /** whether the kind is a dice of some colour */
+    public static boolean isDiceKind(int kind) {
+        return kind == KIND_DICE || kind == KIND_DICE_RED || kind == KIND_DICE_BLUE;
+    }
+
+    /** the colour of the dice of this kind (white for a kind that is none) */
+    public static Dice.Color diceColorOf(int kind) {
+        return kind == KIND_DICE_RED ? Dice.Color.RED : kind == KIND_DICE_BLUE ? Dice.Color.BLUE : Dice.Color.WHITE;
+    }
+
+    public static int kindOfDice(Dice.Color color) {
+        return color == Dice.Color.RED ? KIND_DICE_RED : color == Dice.Color.BLUE ? KIND_DICE_BLUE : KIND_DICE;
+    }
 
     /** everything that can be in the list the server sends */
     public static final int MAX_ENTITIES = MAX_CUBES + MAX_PIECES;
@@ -58,7 +88,7 @@ public final class CubeManager {
     private static final double VOID_Y = -32.0D;
 
     private static final int FILE_MAGIC = 0x43554245;   // "CUBE"
-    private static final int FILE_VERSION = 2;   // 2 adds the piece byte to every entry, 1 is read as cubes only
+    private static final int FILE_VERSION = 3;   // 3 adds the extra state (a ragdoll's pose) after an entry, 2 adds the piece byte to every entry, 1 is read as cubes only
 
     /**
      * another player's body as the server sees it: where it is and how fast it is walking, so a cube can be pushed by it and is blocked by it. the player of this machine is not one (it is passed to tick)
@@ -83,14 +113,14 @@ public final class CubeManager {
 
     /** a cube went into water: where, and how hard (0..1). set by a server so everybody in the world hears it, else the player here does */
     public interface SplashListener {
-        void splashed(double x, double y, double z, float strength);
+        void splashed(double x, double y, double z, float strength, boolean ragdoll);
     }
 
     private SplashListener splashListener;
 
     /** a cube hit a player's body: where, which player (the id from Body, -1 = the player of this machine) and how hard (0..1). set by a server, else the sound is played here */
     public interface ImpactListener {
-        void hit(double x, double y, double z, int bodyId, float strength);
+        void hit(double x, double y, double z, int bodyId, float strength, boolean ragdoll);
     }
 
     private ImpactListener impactListener;
@@ -114,13 +144,19 @@ public final class CubeManager {
     private static final double DRAG_MIN_SPEED = 0.5D;
     private static final double DRAG_FULL_SPEED = 5.0D;
     private static final double DRAG_RANGE = 24.0D;
-    private final java.util.Map<PhysCube, com.nikohalfkino.rubydung.audio.SoundEffects.Loop> dragLoops = new java.util.HashMap<>();
+    private final java.util.Map<PhysEntity, com.nikohalfkino.rubydung.audio.SoundEffects.Loop> dragLoops = new java.util.HashMap<>();
 
     public void setSplashListener(SplashListener listener) {
         this.splashListener = listener;
     }
 
     private Dice.RollListener rollListener;
+
+    private ParticleBody.LiquidProbe liquidProbe;
+
+    private boolean liquidAt(double px, double py, double pz) {
+        return this.level.getLiquids().has((int) Math.floor(px), (int) Math.floor(py), (int) Math.floor(pz));
+    }
 
     private final Level level;
     private final List<WorldEntity> cubes = new ArrayList<>();
@@ -159,9 +195,9 @@ public final class CubeManager {
     }
 
     /** the cube or dice with this id, null if there is none or it is a piece */
-    public PhysCube cubeById(int id) {
+    public PhysEntity cubeById(int id) {
         WorldEntity entity = byId(id);
-        return entity instanceof PhysCube ? (PhysCube) entity : null;
+        return entity instanceof PhysEntity ? (PhysEntity) entity : null;
     }
 
     /** the chess piece with this id, null if there is none or it is a cube */
@@ -170,13 +206,16 @@ public final class CubeManager {
         return entity instanceof ChessPiece ? (ChessPiece) entity : null;
     }
 
-    /** a new entity for a piece code (see WorldEntity.pieceCode): a chess piece for 0 and up, a dice for -2 and below, else a weighted cube */
+    /** a new entity for a piece code (see WorldEntity.pieceCode): a chess piece for 0 and up, a ragdoll for -16 .. -31, a dice for the codes of a dice (see Dice.colorOf), else a weighted cube */
     public static WorldEntity create(int code, double x, double y, double z) {
         if (code >= 0) {
             return new ChessPiece(x, y, z, code);
         }
-        if (code <= Dice.CODE_IDLE) {
-            Dice dice = new Dice(x, y, z);
+        if (Ragdoll.isRagdollCode(code)) {
+            return new Ragdoll(x, y, z, Ragdoll.modelOf(code));
+        }
+        if (Dice.isDiceCode(code)) {
+            Dice dice = new Dice(x, y, z, Dice.colorOf(code));
             dice.applyPieceCode(code);
             return dice;
         }
@@ -212,7 +251,7 @@ public final class CubeManager {
     public void retainOnly(Set<Integer> ids) {
         for (int i = this.cubes.size() - 1; i >= 0; i--) {
             WorldEntity entity = this.cubes.get(i);
-            boolean carriedHere = entity instanceof PhysCube && ((PhysCube) entity).held;
+            boolean carriedHere = entity instanceof PhysEntity && ((PhysEntity) entity).held;
             if (!ids.contains(entity.id) && !carriedHere) {
                 this.cubes.remove(i);
             }
@@ -235,7 +274,12 @@ public final class CubeManager {
 
     /** whether a cube may be placed into the cell: nothing in it, no other cube, not on top of the player */
     public boolean canSpawnIn(int cellX, int cellY, int cellZ, Player player) {
-        if (countPieces(false) >= MAX_CUBES) {
+        return canSpawnIn(cellX, cellY, cellZ, player, KIND_CUBE);
+    }
+
+    /** kind says what is put there (KIND_*). a ragdoll is taller than a cell, so the room over it is looked at too */
+    public boolean canSpawnIn(int cellX, int cellY, int cellZ, Player player, int kind) {
+        if (countPieces(false) >= MAX_CUBES || kind == KIND_RAGDOLL && countRagdolls() >= MAX_RAGDOLLS) {
             return false;
         }
         if (cellX < 0 || cellY < 0 || cellZ < 0
@@ -247,7 +291,15 @@ public final class CubeManager {
             return false;
         }
 
-        PhysCube probe = spawnPoint(cellX, cellY, cellZ, false);
+        PhysEntity probe = spawnPoint(cellX, cellY, cellZ, kind);
+        if (kind == KIND_RAGDOLL) {
+            AABB room = new AABB(probe.minX(), probe.minY(), probe.minZ(), probe.maxX(), probe.maxY(), probe.maxZ());
+            for (AABB box : this.level.getWorldCubes(room)) {
+                if (probe.overlaps(box.minX, box.minY, box.minZ, box.maxX, box.maxY, box.maxZ)) {
+                    return false;
+                }
+            }
+        }
         for (WorldEntity other : this.cubes) {
             if (!other.isPiece()
                     && probe.overlaps(other.minX(), other.minY(), other.minZ(), other.maxX(), other.maxY(), other.maxZ())) {
@@ -268,27 +320,53 @@ public final class CubeManager {
     }
 
     /** puts a cube in the middle of the cell, on its floor: aligned to the grid like a tile. null if canSpawnIn says no */
-    public PhysCube spawnIn(int cellX, int cellY, int cellZ, Player player) {
+    public PhysEntity spawnIn(int cellX, int cellY, int cellZ, Player player) {
         return spawnIn(cellX, cellY, cellZ, player, false);
     }
 
     /** dice = a dice instead of a plain cube */
-    public PhysCube spawnIn(int cellX, int cellY, int cellZ, Player player, boolean dice) {
-        if (!canSpawnIn(cellX, cellY, cellZ, player)) {
+    public PhysEntity spawnIn(int cellX, int cellY, int cellZ, Player player, boolean dice) {
+        return spawnIn(cellX, cellY, cellZ, player, dice ? KIND_DICE : KIND_CUBE, Double.NaN, Double.NaN);
+    }
+
+    /**
+     * kind says what is put there (KIND_*). a ragdoll is turned to face (faceX, faceZ), the place of whoever put it down (NaN = it keeps the way the model faces)
+     */
+    public PhysEntity spawnIn(int cellX, int cellY, int cellZ, Player player, int kind, double faceX, double faceZ) {
+        if (!canSpawnIn(cellX, cellY, cellZ, player, kind)) {
             return null;
         }
-        PhysCube cube = spawnPoint(cellX, cellY, cellZ, dice);
+        PhysEntity cube = spawnPoint(cellX, cellY, cellZ, kind);
+        if (cube instanceof Ragdoll && !Double.isNaN(faceX) && !Double.isNaN(faceZ)) {
+            ((Ragdoll) cube).faceToward(faceX - cube.x, faceZ - cube.z);
+        }
+        if (cube instanceof Ragdoll) {
+            ((Ragdoll) cube).putToSleep();   // it stands where it was put: it has no balance of its own and would fall over at once
+        }
         cube.id = this.nextId++;
         this.cubes.add(cube);
         cube.type.getHooks().onSpawn(cube);
         return cube;
     }
 
-    private static PhysCube spawnPoint(int cellX, int cellY, int cellZ, boolean dice) {
+    private static PhysEntity spawnPoint(int cellX, int cellY, int cellZ, int kind) {
         double x = cellX + 0.5D;
-        double y = cellY + PhysCube.HALF + 0.001D;
         double z = cellZ + 0.5D;
-        return dice ? new Dice(x, y, z) : new WeightedCube(x, y, z);
+        if (kind == KIND_RAGDOLL) {
+            return new Ragdoll(x, cellY + Ragdoll.restingCenterHeightOf(0) + 0.0005D, z, 0);
+        }
+        double y = cellY + PhysCube.HALF + 0.001D;
+        return isDiceKind(kind) ? new Dice(x, y, z, diceColorOf(kind)) : new WeightedCube(x, y, z);
+    }
+
+    private int countRagdolls() {
+        int n = 0;
+        for (WorldEntity entity : this.cubes) {
+            if (entity instanceof Ragdoll) {
+                n++;
+            }
+        }
+        return n;
     }
 
     public void remove(WorldEntity entity) {
@@ -304,23 +382,33 @@ public final class CubeManager {
 
     // ---------------------------------------------------------------- picking
 
-    /** the nearest loose cube the ray (unit direction) hits within maxDistance, null if none. distanceOut[0] gets the distance */
-    public PhysCube raycast(double ox, double oy, double oz, double dx, double dy, double dz,
-                            double maxDistance, double[] distanceOut) {
-        PhysCube best = null;
+    /** the nearest loose body the ray (unit direction) hits within maxDistance, null if none. distanceOut[0] gets the distance */
+    public PhysEntity raycast(double ox, double oy, double oz, double dx, double dy, double dz,
+                              double maxDistance, double[] distanceOut) {
+        return raycast(ox, oy, oz, dx, dy, dz, maxDistance, distanceOut, null);
+    }
+
+    /** the same, and pick (if not null) gets the part of the body that was hit (a limb of a ragdoll) and where along it */
+    public PhysEntity raycast(double ox, double oy, double oz, double dx, double dy, double dz,
+                              double maxDistance, double[] distanceOut, GrabPick pick) {
+        PhysEntity best = null;
         double bestDistance = maxDistance;
+        GrabPick candidate = pick == null ? null : new GrabPick();
         for (WorldEntity entity : this.cubes) {
-            if (!(entity instanceof PhysCube) || !entity.type.isHoldable()) {
+            if (!(entity instanceof PhysEntity) || !entity.type.isHoldable()) {
                 continue;
             }
-            PhysCube cube = (PhysCube) entity;
+            PhysEntity cube = (PhysEntity) entity;
             if (cube.held || cube.remoteHeld) {
                 continue;
             }
-            double d = cube.raycast(ox, oy, oz, dx, dy, dz, bestDistance);
+            double d = cube.raycastPart(ox, oy, oz, dx, dy, dz, bestDistance, candidate);
             if (d >= 0.0D && d <= bestDistance) {
                 best = cube;
                 bestDistance = d;
+                if (pick != null) {
+                    pick.copyFrom(candidate);
+                }
             }
         }
         if (best != null && distanceOut != null) {
@@ -334,17 +422,14 @@ public final class CubeManager {
     /** adds the boxes of the cubes the player can bump into near region: not the one in the hands, not one just let go of while it overlaps the player */
     public void addCollisionBoxes(AABB region, List<AABB> out) {
         for (WorldEntity entity : this.cubes) {
-            if (!(entity instanceof PhysCube) || !entity.type.isSolidForPlayer()) {
+            if (!(entity instanceof PhysEntity) || !entity.type.isSolidForPlayer()) {
                 continue;
             }
-            PhysCube cube = (PhysCube) entity;
+            PhysEntity cube = (PhysEntity) entity;
             if (cube.held || cube.remoteHeld || cube.ignorePlayer) {
                 continue;
             }
-            if (cube.overlaps(region.minX - 1.0D, region.minY - 1.0D, region.minZ - 1.0D,
-                    region.maxX + 1.0D, region.maxY + 1.0D, region.maxZ + 1.0D)) {
-                out.add(new AABB(cube.minX(), cube.minY(), cube.minZ(), cube.maxX(), cube.maxY(), cube.maxZ()));
-            }
+            cube.addSolidBoxes(region, out);
         }
     }
 
@@ -366,10 +451,10 @@ public final class CubeManager {
 
         if (!this.replica) {
             for (WorldEntity entity : this.cubes) {
-                if (!(entity instanceof PhysCube) || !entity.type.isPushable()) {
+                if (!(entity instanceof PhysEntity) || !entity.type.isPushable()) {
                     continue;
                 }
-                PhysCube cube = (PhysCube) entity;
+                PhysEntity cube = (PhysEntity) entity;
                 if (cube.ignorePlayer && (body == null || !cube.overlaps(body.minX - 0.02D, body.minY - 0.02D,
                         body.minZ - 0.02D, body.maxX + 0.02D, body.maxY + 0.02D, body.maxZ + 0.02D))) {
                     cube.ignorePlayer = false;
@@ -379,11 +464,11 @@ public final class CubeManager {
                 }
 
                 if (!cube.held) {
-                    if (!cube.ignorePlayer && player != null && body != null) {
+                    if (!cube.ignorePlayer && player != null && body != null && cube.pushedByWalking()) {
                         pushByBox(cube, body, player.getPhysics().getWishVelocity());
                         bounceUnder(cube, body, player.getPhysics().getCeilingHitSpeed());
                     }
-                    if (!cube.ignoreBodies) {
+                    if (!cube.ignoreBodies && cube.pushedByWalking()) {
                         for (Body other : others) {
                             pushByBox(cube, other.box, new double[]{other.wishX, 0.0D, other.wishZ});
                         }
@@ -396,7 +481,7 @@ public final class CubeManager {
             if (!this.replica) {
                 entity.type.getHooks().onTick(entity);
             }
-            if (!(entity instanceof PhysCube)) {
+            if (!(entity instanceof PhysEntity)) {
                 // a piece is no body: the server glides it, a replica eases toward what the server says
                 if (this.replica) {
                     entity.stepReplica();
@@ -405,7 +490,7 @@ public final class CubeManager {
                 }
                 continue;
             }
-            PhysCube cube = (PhysCube) entity;
+            PhysEntity cube = (PhysEntity) entity;
             if (this.replica && !cube.held) {
                 cube.stepReplica();
                 continue;
@@ -413,15 +498,22 @@ public final class CubeManager {
 
             double carryFromX = cube.x;
             double carryFromZ = cube.z;
-            boolean carriesPlayer = !this.replica && !cube.held && player != null && body != null && standsOn(body, cube);
+            boolean carriesPlayer = !this.replica && !cube.held && player != null && body != null
+                    && cube.type.isSolidForPlayer() && standsOn(body, cube);
 
             // a carried cube takes the cubes lying on it along (see carryRiders): they are not in its way
-            List<PhysCube> riders = cube.held && !this.replica ? ridersOf(cube) : Collections.<PhysCube>emptyList();
+            List<PhysEntity> riders = cube.held && !this.replica ? ridersOf(cube) : Collections.<PhysEntity>emptyList();
             double carryFromY = cube.y;
 
             collectObstacles(cube, body, others, riders);
-            cube.inLiquid = this.level.getLiquids().has(
-                    (int) Math.floor(cube.x), (int) Math.floor(cube.y), (int) Math.floor(cube.z));
+            cube.inLiquid = liquidAt(cube.x, cube.y, cube.z);
+            if (cube instanceof ParticleEntity) {
+                // a body made of points is tested point by point (it sets inLiquid itself during its tick)
+                if (this.liquidProbe == null) {
+                    this.liquidProbe = this::liquidAt;
+                }
+                ((ParticleEntity) cube).setLiquidProbe(this.liquidProbe);
+            }
             cube.tick(this.obstacles);
             keepInsideLevel(cube);
             if (cube.hitBody != null && cube.hitSpeed >= HIT_MIN_SPEED && cube.hitCooldown == 0) {
@@ -436,13 +528,17 @@ public final class CubeManager {
             if (splash > 0.0F) {
                 if (this.splashListener != null) {
                     // a server: everybody in the world within hearing distance gets it
-                    this.splashListener.splashed(cube.x, cube.y, cube.z, splash);
+                    this.splashListener.splashed(cube.x, cube.y, cube.z, splash, cube.isRagdoll());
                 } else if (player != null) {
                     // alone: the player hears it, the volume falls off with distance
                     float volume = com.nikohalfkino.rubydung.audio.BodySounds.volumeAt(
                             cube.x - player.x, cube.y - player.y, cube.z - player.z, 32.0D);
-                    com.nikohalfkino.rubydung.audio.BodySounds.play(
-                            com.nikohalfkino.rubydung.audio.BodySounds.WATER_ENTER, splash, volume);
+                    if (cube.isRagdoll()) {
+                        com.nikohalfkino.rubydung.audio.BodySounds.ragdollSplash(splash * volume);
+                    } else {
+                        com.nikohalfkino.rubydung.audio.BodySounds.play(
+                                com.nikohalfkino.rubydung.audio.BodySounds.WATER_ENTER, splash, volume);
+                    }
                 }
             }
             if (!this.replica && cube instanceof Dice) {
@@ -484,13 +580,13 @@ public final class CubeManager {
     }
 
     // the cubes lying on top of a carried one move along with it, up and down as well as sideways (and the ones on top of those, and so on): the stack is carried as one body, it does not slide off or bounce on the cube below. returns how far up the whole stack could really go, at most dy, so the carrier can stay under it when a ceiling is in the way
-    private double carryRiders(PhysCube carrier, List<PhysCube> riders, double dx, double dy, double dz, AABB body, List<Body> others) {
+    private double carryRiders(PhysEntity carrier, List<PhysEntity> riders, double dx, double dy, double dz, AABB body, List<Body> others) {
         double allowedUp = dy;
-        for (PhysCube rider : riders) {
-            List<PhysCube> above = ridersOf(rider);   // taken before it moves
+        for (PhysEntity rider : riders) {
+            List<PhysEntity> above = ridersOf(rider);   // taken before it moves
             double fromX = rider.x;
             double fromZ = rider.z;
-            collectObstacles(rider, body, others, Collections.<PhysCube>emptyList());
+            collectObstacles(rider, body, others, Collections.<PhysEntity>emptyList());
             double up = rider.carryBy(this.obstacles, dx, dy, dz);
             double top = up;
             if (!above.isEmpty()) {
@@ -511,14 +607,18 @@ public final class CubeManager {
     }
 
     // the cubes lying directly on this one
-    private List<PhysCube> ridersOf(PhysCube under) {
-        List<PhysCube> result = null;
+    private List<PhysEntity> ridersOf(PhysEntity under) {
+        if (under.partCount() > 1) {
+            return Collections.<PhysEntity>emptyList();   // a limb is no floor to carry a stack on
+        }
+        List<PhysEntity> result = null;
         for (WorldEntity entity : this.cubes) {
-            if (entity == under || !(entity instanceof PhysCube)) {
+            if (entity == under || !(entity instanceof PhysEntity)) {
                 continue;
             }
-            PhysCube top = (PhysCube) entity;
-            if (top.held || top.remoteHeld || !top.type.isPhysics() || !liesOn(top, under)) {
+            PhysEntity top = (PhysEntity) entity;
+            // a body made of parts (a ragdoll) is no rider: it is not one rigid block, so it is not carried along as one. what it lies on lifts it and drags it by contact, like anything else
+            if (top.held || top.remoteHeld || !top.type.isPhysics() || top.partCount() > 1 || !liesOn(top, under)) {
                 continue;
             }
             if (result == null) {
@@ -526,34 +626,38 @@ public final class CubeManager {
             }
             result.add(top);
         }
-        return result == null ? Collections.<PhysCube>emptyList() : result;
+        return result == null ? Collections.<PhysEntity>emptyList() : result;
     }
 
     // a cube was pushed along axis: everything that lies on it is pushed along, so a stack moves as one (the top of a tall stack is out of the player's reach)
-    private void pushRiders(PhysCube under, int axis, double speed) {
-        for (PhysCube rider : ridersOf(under)) {
+    private void pushRiders(PhysEntity under, int axis, double speed) {
+        for (PhysEntity rider : ridersOf(under)) {
             rider.pushHorizontal(axis, speed);
             pushRiders(rider, axis, speed);
         }
     }
 
     // the cube stands on top of the other one: over it, and its underside is on the other's top
-    private static boolean liesOn(PhysCube top, PhysCube under) {
+    private static boolean liesOn(PhysEntity top, PhysEntity under) {
         boolean over = top.minX() < under.maxX() && top.maxX() > under.minX()
                 && top.minZ() < under.maxZ() && top.maxZ() > under.minZ();
         return over && Math.abs(top.minY() - under.maxY()) < 0.06D;
     }
 
     // a cube hit a player: a server tells the listener, alone the player here hears it (and feels it if it was them)
-    private void bodyHit(PhysCube cube, Player player) {
+    private void bodyHit(PhysEntity cube, Player player) {
         float strength = (float) Math.max(0.3D, Math.min(1.0D, cube.hitSpeed / HIT_FULL_SPEED));
         int bodyId = cube.hitBody.bodyId;
         if (this.impactListener != null) {
-            this.impactListener.hit(cube.x, cube.y, cube.z, bodyId, strength);
+            this.impactListener.hit(cube.x, cube.y, cube.z, bodyId, strength, cube.isRagdoll());
         } else if (player != null) {
             float volume = com.nikohalfkino.rubydung.audio.BodySounds.volumeAt(
                     cube.x - player.x, cube.y - player.y, cube.z - player.z, 32.0D);
-            com.nikohalfkino.rubydung.audio.SoundEffects.play("cube_impact_player", strength * volume);
+            if (cube.isRagdoll()) {
+                com.nikohalfkino.rubydung.audio.BodySounds.ragdollImpact(strength * volume);   // a body hitting a body: a dull thud, not a cube's knock
+            } else {
+                com.nikohalfkino.rubydung.audio.SoundEffects.play("cube_impact_player", strength * volume);
+            }
             if (bodyId == -1) {
                 com.nikohalfkino.rubydung.audio.SoundEffects.play("phys_impact_player", strength);
             }
@@ -561,14 +665,18 @@ public final class CubeManager {
     }
 
     // a cube hit a wall, the floor or another cube
-    private void bump(PhysCube cube, Player player) {
+    private void bump(PhysEntity cube, Player player) {
         float strength = (float) Math.max(0.25D, Math.min(1.0D, cube.bumpSpeed / BUMP_FULL_SPEED));
         if (this.impactListener != null) {
-            this.impactListener.hit(cube.x, cube.y, cube.z, BUMP, strength);
+            this.impactListener.hit(cube.x, cube.y, cube.z, BUMP, strength, cube.isRagdoll());
         } else if (player != null) {
             float volume = com.nikohalfkino.rubydung.audio.BodySounds.volumeAt(
                     cube.x - player.x, cube.y - player.y, cube.z - player.z, 32.0D);
-            com.nikohalfkino.rubydung.audio.SoundEffects.play("cube_bump", strength * volume);
+            if (cube.isRagdoll()) {
+                com.nikohalfkino.rubydung.audio.BodySounds.ragdollImpact(strength * volume);
+            } else {
+                com.nikohalfkino.rubydung.audio.SoundEffects.play("cube_bump", strength * volume);
+            }
         }
     }
 
@@ -580,12 +688,12 @@ public final class CubeManager {
         }
 
         for (WorldEntity entity : this.cubes) {
-            if (!(entity instanceof PhysCube)) {
+            if (!(entity instanceof PhysEntity)) {
                 continue;
             }
-            PhysCube cube = (PhysCube) entity;
+            PhysEntity cube = (PhysEntity) entity;
             float volume = 0.0F;
-            if (!cube.held && !cube.remoteHeld && !cube.dead) {
+            if (!cube.held && !cube.remoteHeld && !cube.dead && cube.dragsOnFloor()) {
                 double speed = Math.hypot(cube.vx, cube.vz);
                 if (speed >= DRAG_MIN_SPEED && Math.abs(cube.vy) < 0.3D && (cube.onGround || onFloor(cube))) {
                     float near = com.nikohalfkino.rubydung.audio.BodySounds.volumeAt(
@@ -608,10 +716,10 @@ public final class CubeManager {
         }
 
         // cubes that are gone (removed, or the level changed)
-        java.util.Iterator<java.util.Map.Entry<PhysCube, com.nikohalfkino.rubydung.audio.SoundEffects.Loop>> it =
+        java.util.Iterator<java.util.Map.Entry<PhysEntity, com.nikohalfkino.rubydung.audio.SoundEffects.Loop>> it =
                 this.dragLoops.entrySet().iterator();
         while (it.hasNext()) {
-            java.util.Map.Entry<PhysCube, com.nikohalfkino.rubydung.audio.SoundEffects.Loop> entry = it.next();
+            java.util.Map.Entry<PhysEntity, com.nikohalfkino.rubydung.audio.SoundEffects.Loop> entry = it.next();
             if (entry.getKey().dead || !this.cubes.contains(entry.getKey())) {
                 entry.getValue().stop();
                 it.remove();
@@ -627,7 +735,7 @@ public final class CubeManager {
     }
 
     // a solid block just under the cube (a replica does not know onGround)
-    private boolean onFloor(PhysCube cube) {
+    private boolean onFloor(PhysEntity cube) {
         int y = (int) Math.floor(cube.minY() - 0.05D);
         double e = 0.02D;
         return this.level.isSolidTile((int) Math.floor(cube.minX() + e), y, (int) Math.floor(cube.minZ() + e))
@@ -636,7 +744,7 @@ public final class CubeManager {
                 || this.level.isSolidTile((int) Math.floor(cube.maxX() - e), y, (int) Math.floor(cube.maxZ() - e));
     }
 
-    private static boolean overlapsAny(PhysCube cube, List<Body> others, double grow) {
+    private static boolean overlapsAny(PhysEntity cube, List<Body> others, double grow) {
         for (Body other : others) {
             AABB b = other.box;
             if (cube.overlaps(b.minX - grow, b.minY - grow, b.minZ - grow, b.maxX + grow, b.maxY + grow, b.maxZ + grow)) {
@@ -646,7 +754,7 @@ public final class CubeManager {
         return false;
     }
 
-    private static boolean standsOn(AABB body, PhysCube cube) {
+    private static boolean standsOn(AABB body, PhysEntity cube) {
         boolean overTop = body.minX < cube.maxX() && body.maxX > cube.minX()
                 && body.minZ < cube.maxZ() && body.maxZ > cube.minZ();
         return overTop && Math.abs(body.minY - cube.maxY()) < 0.06D;
@@ -654,7 +762,7 @@ public final class CubeManager {
 
     // the player jumps under the cube and hits it with their head: it is knocked up, the harder the jump the higher it goes
     // only the cube right above the head counts (touching, overlapping in x and z), and only a cube free to move, not a carried one
-    private void bounceUnder(PhysCube cube, AABB body, double hitSpeed) {
+    private void bounceUnder(PhysEntity cube, AABB body, double hitSpeed) {
         if (hitSpeed < BOUNCE_MIN_HIT || cube.held || cube.remoteHeld) {
             return;
         }
@@ -668,18 +776,18 @@ public final class CubeManager {
     }
 
     // knocked up with everything that lies on it, at the same speed
-    private void liftStack(PhysCube cube, double speed) {
+    private void liftStack(PhysEntity cube, double speed) {
         if (speed > cube.vy) {
             cube.vy = speed;
             cube.onGround = false;
         }
-        for (PhysCube rider : ridersOf(cube)) {
+        for (PhysEntity rider : ridersOf(cube)) {
             liftStack(rider, speed);
         }
     }
 
     // the player walks into the cube: it gets going in the direction they are walking
-    private void pushByBox(PhysCube cube, AABB body, double[] wish) {
+    private void pushByBox(PhysEntity cube, AABB body, double[] wish) {
         boolean beside = body.minY < cube.maxY() - 0.1D && body.maxY > cube.minY() + 0.1D;
         if (!beside) {
             return;   // standing on it, or it is over their head
@@ -722,7 +830,7 @@ public final class CubeManager {
     }
 
     // everything this cube could hit this tick
-    private void collectObstacles(PhysCube cube, AABB body, List<Body> others, List<PhysCube> skip) {
+    private void collectObstacles(PhysEntity cube, AABB body, List<Body> others, List<PhysEntity> skip) {
         this.obstacles.clear();
 
         double r = cube.reach();
@@ -733,10 +841,8 @@ public final class CubeManager {
         }
 
         for (WorldEntity entity : this.cubes) {
-            if (entity != cube && entity instanceof PhysCube && entity.type.isPhysics() && !skip.contains(entity)) {
-                PhysCube other = (PhysCube) entity;
-                this.obstacles.add(new CollisionBox(other.minX(), other.minY(), other.minZ(),
-                        other.maxX(), other.maxY(), other.maxZ(), other));
+            if (entity != cube && entity instanceof PhysEntity && entity.type.isPhysics() && !skip.contains(entity)) {
+                ((PhysEntity) entity).addObstacles(region, this.obstacles);
             }
         }
 
@@ -758,12 +864,8 @@ public final class CubeManager {
         }
     }
 
-    private void keepInsideLevel(PhysCube cube) {
-        double h = PhysCube.HALF;
-        if (cube.x < h) { cube.x = h; cube.vx = Math.max(cube.vx, 0.0D); }
-        if (cube.x > this.level.width - h) { cube.x = this.level.width - h; cube.vx = Math.min(cube.vx, 0.0D); }
-        if (cube.z < h) { cube.z = h; cube.vz = Math.max(cube.vz, 0.0D); }
-        if (cube.z > this.level.height - h) { cube.z = this.level.height - h; cube.vz = Math.min(cube.vz, 0.0D); }
+    private void keepInsideLevel(PhysEntity cube) {
+        cube.confine(this.level.width, this.level.height);   // by its own hull: a ragdoll is narrower than a cube
         if (cube.y < VOID_Y) {
             cube.dead = true;
         }
@@ -950,6 +1052,9 @@ public final class CubeManager {
                 out.writeFloat((float) cube.qy);
                 out.writeFloat((float) cube.qz);
                 out.writeByte(cube.pieceCode());
+                if (EntityTypes.extraSizeOf(cube.pieceCode()) > 0) {
+                    cube.writeExtra(out);
+                }
             }
         } catch (IOException e) {
             throw new IllegalStateException(e);   // a byte array does not fail
@@ -993,8 +1098,18 @@ public final class CubeManager {
                 double qx = in.readFloat();
                 double qy = in.readFloat();
                 double qz = in.readFloat();
-                WorldEntity cube = create(version >= 2 ? in.readByte() : WeightedCube.CODE, x, y, z);
+                int code = version >= 2 ? in.readByte() : WeightedCube.CODE;
+                byte[] extra = null;
+                int extraSize = version >= 3 ? EntityTypes.extraSizeOf(code) : 0;
+                if (extraSize > 0) {
+                    extra = new byte[extraSize];
+                    in.readFully(extra);
+                }
+                WorldEntity cube = create(code, x, y, z);
                 cube.setOrientation(qw, qx, qy, qz);
+                if (extra != null) {
+                    cube.applyExtra(extra, true);   // after the orientation: a pose has its own
+                }
                 cube.prevQw = cube.qw;
                 cube.prevQx = cube.qx;
                 cube.prevQy = cube.qy;

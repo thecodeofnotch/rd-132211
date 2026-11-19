@@ -16,6 +16,8 @@ import com.nikohalfkino.rubydung.interfaces.hud.InteractPromptHud;
 import com.nikohalfkino.rubydung.interfaces.hud.SelectedTileHud;
 import com.nikohalfkino.rubydung.interfaces.widget.Anchor;
 import com.nikohalfkino.rubydung.interfaces.screen.LoadingScreen;
+import com.nikohalfkino.rubydung.interfaces.screen.FlashingLightsScreen;
+import com.nikohalfkino.rubydung.interfaces.screen.SplashScreen;
 import com.nikohalfkino.rubydung.interfaces.screen.TitleScreen;
 import com.nikohalfkino.rubydung.level.*;
 import com.nikohalfkino.rubydung.level.tiles.special.DoorColor;
@@ -32,6 +34,7 @@ import com.nikohalfkino.rubydung.render.ScreenshotManager;
 import com.nikohalfkino.rubydung.render.Textures;
 import com.nikohalfkino.rubydung.render.WindowManager;
 import com.nikohalfkino.rubydung.util.AutosaveSettings;
+import com.nikohalfkino.rubydung.util.GameLog;
 import com.nikohalfkino.rubydung.util.GameSettings;
 import com.nikohalfkino.rubydung.util.KeyBinding;
 import com.nikohalfkino.rubydung.util.SaveQueue;
@@ -93,6 +96,7 @@ public class RubyDung implements Runnable {
     private DoorColor pendingArrivalColor = null;
 
     public static void main(String[] args) {
+        GameLog.init();
         new Thread(new RubyDung()).start();
     }
 
@@ -228,7 +232,25 @@ public class RubyDung implements Runnable {
         this.musicPlayer.start();
         this.speaker.start();
 
-        openScreen(new TitleScreen(this));
+        openStartupScreens();
+    }
+
+    /** splash -> flashing lights warning -> title, each one only if its option is on */
+    private void openStartupScreens() {
+        Runnable toTitle = () -> openScreen(new TitleScreen(this, true));
+        Runnable toWarning = () -> {
+            if (GameSettings.isShowFlashingWarning()) {
+                openScreen(new FlashingLightsScreen(this, toTitle));
+            } else {
+                toTitle.run();
+            }
+        };
+
+        if (GameSettings.isShowSplashScreen()) {
+            openScreen(new SplashScreen(this, toWarning));
+        } else {
+            toWarning.run();
+        }
     }
 
     /** saves the old world (door closed), arrives at a matching door in the new one */
@@ -364,9 +386,18 @@ public class RubyDung implements Runnable {
 
     private void autosave() {
         // Only snapshots happen here; the GZIP + disk write runs on the save thread.
-        this.session.saveLevelAsync(() ->
-                runOnMainThread(() -> this.centerIndicator.showMessage("Saved!")));
-        saveWorldTime();
+        // An autosave that can't start (memory) is skipped and retried next interval, it must not end the game.
+        try {
+            GameLog.memory("autosave starting");
+            this.session.saveLevelAsync(() -> {
+                GameLog.memory("autosave finished");
+                runOnMainThread(() -> this.centerIndicator.showMessage("Saved!"));
+            });
+            saveWorldTime();
+        } catch (Throwable t) {
+            System.err.println("[autosave] failed: " + t);
+            t.printStackTrace();
+        }
         this.ticksSinceAutosave = 0;
     }
 
@@ -430,6 +461,7 @@ public class RubyDung implements Runnable {
 
         try {
             while (!Display.isCloseRequested() && this.running) {
+                GameLog.heartbeat();
                 Runnable task;
                 while ((task = this.mainThreadTasks.poll()) != null) {
                     task.run();
@@ -586,7 +618,7 @@ public class RubyDung implements Runnable {
     }
 
     public void toggleFullscreen() {
-        // F11: into fullscreen, or back to whichever of windowed / maximized it came from.
+        // F11: into fullscreen, or back to the windowed state it came from.
         GameSettings.setDisplayType(GameSettings.isFullscreen()
                 ? GameSettings.getLastWindowType() : GameSettings.DisplayType.FULLSCREEN);
         GameSettings.save();

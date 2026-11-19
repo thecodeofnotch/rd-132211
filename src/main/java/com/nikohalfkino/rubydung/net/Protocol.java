@@ -1,6 +1,7 @@
 package com.nikohalfkino.rubydung.net;
 
 import com.nikohalfkino.rubydung.entity.CubeManager;
+import com.nikohalfkino.rubydung.entity.EntityTypes;
 import com.nikohalfkino.rubydung.entity.WorldEntity;
 import com.nikohalfkino.rubydung.level.SubTiles;
 
@@ -17,7 +18,7 @@ public final class Protocol {
     }
 
     /** bump when a packet changes, a client with another version is refused */
-    public static final int VERSION = 11;   // 11: S_TIME carries the day count and the pinned sun phase. 10: SOUND_FOOTSTEP shifted the server's sound events
+    public static final int VERSION = 14;   // 14: dice have colours: C_CUBE_SPAWN kinds 3 (red dice) and 4 (blue dice), the piece codes of the red dice are -32 .. -38 and of the blue ones -40 .. -46, and the ragdolls' are -16 .. -31. 13: C_CUBE_FREEZE; C_CUBE_HOLD's orientation is, for a body made of parts (a ragdoll), the turn of the carried limb since the last one; the pose has the mask of the frozen particles; C_CUBE_PICKUP carries the part and where along it (a ragdoll is taken by a limb), C_CUBE_RELEASE a thrown byte, and a cube entry in S_CUBES has the extra state (a ragdoll's pose) after it. 12: C_CUBE_SPAWN says what to spawn with a byte (cube, dice, ragdoll) instead of a boolean, and the piece codes -16 and below are ragdolls. 11: S_TIME carries the day count and the pinned sun phase. 10: SOUND_FOOTSTEP shifted the server's sound events
 
     public static final int DEFAULT_PORT = 25566;
 
@@ -58,7 +59,10 @@ public final class Protocol {
     public static final int SOUND_CUBE_HIT = 10;    // a cube hit a player: the sound of the cube, heard by those near it
     public static final int SOUND_PHYS_IMPACT = 11; // sent only to the player who was hit: the sound of taking it
     public static final int SOUND_CUBE_BUMP = 12;   // a cube hit a wall, the floor or another cube
-    public static final int SOUND_COUNT = 13;
+    public static final int SOUND_RAGDOLL_HIT = 13;    // a ragdoll hit a player: a dull thud instead of a cube's knock
+    public static final int SOUND_RAGDOLL_BUMP = 14;   // a ragdoll hit a wall, the floor or something else
+    public static final int SOUND_RAGDOLL_SPLASH = 15; // a ragdoll went into water: heavier than a cube's splash
+    public static final int SOUND_COUNT = 16;
 
     // client -> server
     public static final int C_HELLO = 1;         // int version, UTF name
@@ -70,11 +74,12 @@ public final class Protocol {
     public static final int C_COMMAND = 7;       // UTF line (without the dot). the server runs it at the player's tier
     public static final int C_TYPING = 9;        // byte 1 = typing a chat message, 0 = stopped (repeated every few seconds while typing)
     public static final int C_DOOR = 8;          // int x y z of the door, UTF target world, int picked colour ordinal
-    public static final int C_CUBE_SPAWN = 10;   // int x y z of the empty cell to put a weighted cube in, boolean dice (true: a dice instead)
-    public static final int C_CUBE_PICKUP = 11;  // int cube id: asks to carry it
+    public static final int C_CUBE_SPAWN = 10;   // int x y z of the empty cell to put a weighted cube in, byte kind (0 a cube, 1 a dice, 2 a ragdoll, 3 a red dice, 4 a blue dice, see CubeManager.KIND_*)
+    public static final int C_CUBE_PICKUP = 11;  // int cube id, byte part, byte frac (0..255 = 0..1 along the part, see GrabPick): asks to carry it
     public static final int C_CUBE_HOLD = 12;    // int cube id, double x y z where it should be, float w x y z orientation (every few ticks while carrying)
-    public static final int C_CUBE_RELEASE = 13; // int cube id, float vx vy vz (blocks/s), float avx avy avz (radians/s): let go or thrown
+    public static final int C_CUBE_RELEASE = 13; // int cube id, float vx vy vz (blocks/s), float avx avy avz (radians/s), byte thrown (1 = thrown, 0 = let go of): let go or thrown
     public static final int C_CUBE_REMOVE = 14;  // int cube id
+    public static final int C_CUBE_FREEZE = 17;  // int cube id, byte mode (0 = freeze the part carried now where it is and let go of it, 1 = free every frozen part of it)
     public static final int C_SOUND = 16;        // byte event (SOUND_*), byte strength (0..255), int x y z: a sound this player made that the others should hear (a knock)
     public static final int C_CHESS_MOVE = 15;   // int piece id, int x z of the square to send it to (the server checks the move)
 
@@ -100,7 +105,7 @@ public final class Protocol {
     public static final int S_TYPING = 39;       // UTF name, byte 1 = typing, 0 = stopped
     public static final int S_DOORS = 40;        // int count, then count * (int x y z of a coloured door's origin, UTF world it leads to, empty = nowhere): the doors of the world the player is in
     public static final int S_SEA_LIQUID = 41;   // UTF name of the liquid the sea is made of
-    public static final int S_CUBES = 42;        // byte full (1 = the whole list, cubes not in it are gone), int count, then count * cube (see writeCube). chess pieces are in it too
+    public static final int S_CUBES = 42;        // byte full (1 = the whole list, cubes not in it are gone), int count, then count * cube (see writeCube, a ragdoll's pose follows its entry). chess pieces are in it too
     public static final int S_CUBE_REMOVE = 43;  // int cube id
     public static final int S_CUBE_DENY = 44;    // int cube id: the server did not let this player carry it, or no longer does
     public static final int S_SOUND = 45;        // byte event (SOUND_*), byte strength (0..255), int x y z: somebody else made a sound there (sent only to players in range)
@@ -224,6 +229,17 @@ public final class Protocol {
         public int holder;
         /** -1 for a plain cube, else the chess piece (see WorldEntity.pieceCode) */
         public int piece = -1;
+        /** the extra state that follows the entry (see WorldEntity.writeExtra), null if the piece code has none */
+        public byte[] extra;
+    }
+
+    /** the part byte and the fraction byte of C_CUBE_PICKUP */
+    public static int fracToByte(double frac) {
+        return (int) Math.round(Math.max(0.0D, Math.min(1.0D, frac)) * 255.0D);
+    }
+
+    public static double byteToFrac(int b) {
+        return (b & 0xFF) / 255.0D;
     }
 
     public static void writeCube(DataOutputStream out, WorldEntity cube, int holder) throws IOException {
@@ -240,6 +256,9 @@ public final class Protocol {
         out.writeFloat((float) cube.vz);
         out.writeInt(holder);
         out.writeByte(cube.pieceCode());
+        if (EntityTypes.extraSizeOf(cube.pieceCode()) > 0) {
+            cube.writeExtra(out);
+        }
     }
 
     public static CubeState readCube(DataInputStream in) throws IOException {
@@ -257,6 +276,11 @@ public final class Protocol {
         c.vz = in.readFloat();
         c.holder = in.readInt();
         c.piece = in.readByte();
+        int extraSize = EntityTypes.extraSizeOf(c.piece);
+        if (extraSize > 0) {
+            c.extra = new byte[extraSize];
+            in.readFully(c.extra);
+        }
         if (!Double.isFinite(c.x + c.y + c.z + c.qw + c.qx + c.qy + c.qz + c.vx + c.vy + c.vz)) {
             throw new IOException("bad cube state");
         }

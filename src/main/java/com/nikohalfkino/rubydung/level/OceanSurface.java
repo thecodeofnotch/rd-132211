@@ -55,6 +55,12 @@ final class OceanSurface {
     }
 
     private static final int SIZE = Chunk.SIZE;
+
+    /**
+     * the sea goes on past the edge of the world, as far as the fake terrain of the border does (WorldBorder.FRINGE). a column out there is a
+     * copy of the nearest real edge column: wet if that one is, with its light and foam
+     */
+    private static final int MARGIN = WorldBorder.FRINGE;
     private static final int MAX_REBUILDS_PER_FRAME = 64;
     private static final float ALPHA_RANGE = 131072.0F;
 
@@ -98,8 +104,8 @@ final class OceanSurface {
 
     OceanSurface(Level level) {
         this.level = level;
-        this.tilesX = (level.width + SIZE - 1) / SIZE;
-        this.tilesZ = (level.height + SIZE - 1) / SIZE;
+        this.tilesX = (level.width + 2 * MARGIN + SIZE - 1) / SIZE;
+        this.tilesZ = (level.height + 2 * MARGIN + SIZE - 1) / SIZE;
         int count = this.tilesX * this.tilesZ;
         this.base = glGenLists(count);
         this.dirty = new boolean[count];
@@ -152,14 +158,21 @@ final class OceanSurface {
         }
     }
 
+    /** dirties the tiles that draw column (x, z) or look at it: its neighbours, and for a column on the edge the copies of it past the edge */
     private void markAround(int x, int z) {
-        for (int dx = -1; dx <= 1; dx++) {
-            for (int dz = -1; dz <= 1; dz++) {
-                int cx = Math.floorDiv(x + dx, SIZE);
-                int cz = Math.floorDiv(z + dz, SIZE);
-                if (cx >= 0 && cz >= 0 && cx < this.tilesX && cz < this.tilesZ) {
-                    this.dirty[cz * this.tilesX + cx] = true;
-                }
+        int w = this.level.width;
+        int h = this.level.height;
+        int xLo = x <= 1 ? -MARGIN : x - 1;
+        int xHi = x >= w - 2 ? w + MARGIN - 1 : x + 1;
+        int zLo = z <= 1 ? -MARGIN : z - 1;
+        int zHi = z >= h - 2 ? h + MARGIN - 1 : z + 1;
+        int txLo = Math.max(0, Math.floorDiv(xLo + MARGIN, SIZE));
+        int txHi = Math.min(this.tilesX - 1, Math.floorDiv(xHi + MARGIN, SIZE));
+        int tzLo = Math.max(0, Math.floorDiv(zLo + MARGIN, SIZE));
+        int tzHi = Math.min(this.tilesZ - 1, Math.floorDiv(zHi + MARGIN, SIZE));
+        for (int tz = tzLo; tz <= tzHi; tz++) {
+            for (int tx = txLo; tx <= txHi; tx++) {
+                this.dirty[tz * this.tilesX + tx] = true;
             }
         }
     }
@@ -210,11 +223,13 @@ final class OceanSurface {
                 if (this.empty[i]) {
                     continue;
                 }
-                float x0 = tx * SIZE;
-                float z0 = tz * SIZE;
-                float x1 = Math.min(this.level.width, x0 + SIZE);
-                float z1 = Math.min(this.level.height, z0 + SIZE);
-                if (range.inRange(x0, z0, x1, z1) && frustum.cubeInFrustum(x0, height - 1.0F, z0, x1, height + 1.0F, z1)) {
+                float x0 = tx * SIZE - MARGIN;
+                float z0 = tz * SIZE - MARGIN;
+                float x1 = Math.min(this.level.width + MARGIN, x0 + SIZE);
+                float z1 = Math.min(this.level.height + MARGIN, z0 + SIZE);
+                // the sea past the edge is bent and torn loose (BorderWarp), so its tiles are a little bigger than they look
+                float pad = x0 < 0 || z0 < 0 || x1 > this.level.width || z1 > this.level.height ? 8.0F : 0.0F;
+                if (range.inRange(x0, z0, x1, z1) && frustum.cubeInFrustum(x0 - pad, height - 1.0F - pad, z0 - pad, x1 + pad, height + 1.0F + pad, z1 + pad)) {
                     this.visibleLists.put(this.base + i);
                 }
             }
@@ -279,7 +294,7 @@ final class OceanSurface {
         for (int c = 0; c < n; c++) {
             if (now[c] != this.small[c]) {
                 this.small[c] = now[c];
-                this.dirty[(c / w / SIZE) * this.tilesX + (c % w) / SIZE] = true;
+                markAround(c % w, c / w);
             }
         }
     }
@@ -289,68 +304,126 @@ final class OceanSurface {
     private void rebuild(int i, int tx, int tz, int top, LiquidLayer liquids) {
         this.dirty[i] = false;
 
-        int minX = tx * SIZE;
-        int minZ = tz * SIZE;
-        int maxX = Math.min(this.level.width, minX + SIZE);
-        int maxZ = Math.min(this.level.height, minZ + SIZE);
+        int minX = tx * SIZE - MARGIN;
+        int minZ = tz * SIZE - MARGIN;
+        int maxX = Math.min(this.level.width + MARGIN, minX + SIZE);
+        int maxZ = Math.min(this.level.height + MARGIN, minZ + SIZE);
         int index = liquids.getOceanLiquid().getLiquidIndex();
         // a liquid that gives off light (lava) is fully lit on its own surface, whatever the light map says there
         boolean glow = liquids.getOceanLiquid().emitsLight();
         boolean any = false;
 
         glNewList(this.base + i, GL_COMPILE);
-        glBegin(GL_QUADS);
-        for (int x = minX; x < maxX; x++) {
-            for (int z = minZ; z < maxZ; z++) {
-                if (liquids.columnThreshold(x, z) >= top || !liquids.isOceanCell(x, top, z)) {
-                    continue;
+        // the columns of the world are quads, the ones past its edge are triangles (the border warps and breaks them, see BorderWarp)
+        for (int pass = 0; pass < 2; pass++) {
+            glBegin(pass == 0 ? GL_QUADS : GL_TRIANGLES);
+            for (int x = minX; x < maxX; x++) {
+                for (int z = minZ; z < maxZ; z++) {
+                    // past the edge of the world a column is a copy of the nearest edge column (everything but its place is read from that one)
+                    int sx = Math.max(0, Math.min(this.level.width - 1, x));
+                    int sz = Math.max(0, Math.min(this.level.height - 1, z));
+                    boolean outside = sx != x || sz != z;
+                    if (outside != (pass == 1)) {
+                        continue;
+                    }
+                    if (liquids.columnThreshold(sx, sz) >= top || !liquids.isOceanCell(sx, top, sz)) {
+                        continue;
+                    }
+                    any = true;
+
+                    boolean west = solid(liquids, x - 1, z, top, outside);
+                    boolean east = solid(liquids, x + 1, z, top, outside);
+                    boolean north = solid(liquids, x, z - 1, top, outside);
+                    boolean south = solid(liquids, x, z + 1, top, outside);
+                    int flags = (west ? 1 : 0) | (east ? 2 : 0) | (north ? 4 : 0) | (south ? 8 : 0);
+                    if (!west && !north && solid(liquids, x - 1, z - 1, top, outside)) flags |= 1 << 4;
+                    if (!east && !north && solid(liquids, x + 1, z - 1, top, outside)) flags |= 1 << 5;
+                    if (!west && !south && solid(liquids, x - 1, z + 1, top, outside)) flags |= 1 << 6;
+                    if (!east && !south && solid(liquids, x + 1, z + 1, top, outside)) flags |= 1 << 7;
+                    flags |= FLAG_TOP | FLAG_SURFACE | (index << 12);
+                    if (!this.small[sz * this.level.width + sx]) {
+                        flags |= FOAM_FULL;
+                    }
+
+                    if (outside) {
+                        java.util.Arrays.fill(this.rects, 0.0F);   // the footprints are in the cell's own coordinates, a copy has none
+                    } else {
+                        fillRects(x, z, top);
+                    }
+                    glMultiTexCoord4f(GL_TEXTURE2, this.rects[0], this.rects[1], this.rects[2], this.rects[3]);
+                    glMultiTexCoord4f(GL_TEXTURE3, this.rects[4], this.rects[5], this.rects[6], this.rects[7]);
+                    glMultiTexCoord4f(GL_TEXTURE4, this.rects[8], this.rects[9], this.rects[10], this.rects[11]);
+
+                    // the sea height this column first gets water at: the quad exists once the surface is above the top of its floor
+                    glMultiTexCoord2f(GL_TEXTURE1, liquids.columnThreshold(sx, sz) + 1, 0.0F);
+                    glColor4f(this.level.getSkyLight(sx, top, sz), glow ? 1.0F : this.level.getBlockLight(sx, top, sz), 1.0F,
+                            flags / ALPHA_RANGE);
+                    if (outside) {
+                        outsideQuad(x, z, top);
+                        continue;
+                    }
+                    glTexCoord2f(0.0F, 0.0F);
+                    glVertex3f(x, 0.0F, z);
+                    glTexCoord2f(1.0F, 0.0F);
+                    glVertex3f(x + 1, 0.0F, z);
+                    glTexCoord2f(1.0F, 1.0F);
+                    glVertex3f(x + 1, 0.0F, z + 1);
+                    glTexCoord2f(0.0F, 1.0F);
+                    glVertex3f(x, 0.0F, z + 1);
                 }
-                any = true;
-
-                boolean west = solid(liquids, x - 1, z, top);
-                boolean east = solid(liquids, x + 1, z, top);
-                boolean north = solid(liquids, x, z - 1, top);
-                boolean south = solid(liquids, x, z + 1, top);
-                int flags = (west ? 1 : 0) | (east ? 2 : 0) | (north ? 4 : 0) | (south ? 8 : 0);
-                if (!west && !north && solid(liquids, x - 1, z - 1, top)) flags |= 1 << 4;
-                if (!east && !north && solid(liquids, x + 1, z - 1, top)) flags |= 1 << 5;
-                if (!west && !south && solid(liquids, x - 1, z + 1, top)) flags |= 1 << 6;
-                if (!east && !south && solid(liquids, x + 1, z + 1, top)) flags |= 1 << 7;
-                flags |= FLAG_TOP | FLAG_SURFACE | (index << 12);
-                if (!this.small[z * this.level.width + x]) {
-                    flags |= FOAM_FULL;
-                }
-
-                fillRects(x, z, top);
-                glMultiTexCoord4f(GL_TEXTURE2, this.rects[0], this.rects[1], this.rects[2], this.rects[3]);
-                glMultiTexCoord4f(GL_TEXTURE3, this.rects[4], this.rects[5], this.rects[6], this.rects[7]);
-                glMultiTexCoord4f(GL_TEXTURE4, this.rects[8], this.rects[9], this.rects[10], this.rects[11]);
-
-                // the sea height this column first gets water at: the quad exists once the surface is above the top of its floor
-                glMultiTexCoord2f(GL_TEXTURE1, liquids.columnThreshold(x, z) + 1, 0.0F);
-                glColor4f(this.level.getSkyLight(x, top, z), glow ? 1.0F : this.level.getBlockLight(x, top, z), 1.0F,
-                        flags / ALPHA_RANGE);
-                glTexCoord2f(0.0F, 0.0F);
-                glVertex3f(x, 0.0F, z);
-                glTexCoord2f(1.0F, 0.0F);
-                glVertex3f(x + 1, 0.0F, z);
-                glTexCoord2f(1.0F, 1.0F);
-                glVertex3f(x + 1, 0.0F, z + 1);
-                glTexCoord2f(0.0F, 1.0F);
-                glVertex3f(x, 0.0F, z + 1);
             }
+            glEnd();
         }
-        glEnd();
         glEndList();
 
         this.empty[i] = !any;
     }
 
+    // the corners of a cell, in the order the quad has them, and their texture coordinates
+    private static final float[] CORNER_U = {0.0F, 1.0F, 1.0F, 0.0F};
+    private static final float[] CORNER_V = {0.0F, 0.0F, 1.0F, 1.0F};
+    private final float[] tri = new float[9];
+
+    /**
+     * a cell past the edge of the world as two triangles, warped like the blocks of the border are (BorderWarp): bent by the faceted wave, with
+     * more and more of them gone the further out, and the rest loose. the list is built at y = 0, the sea height is only added when it is drawn, so
+     * the field is read at the sea's top cell and the push is stored as an offset from it
+     */
+    private void outsideQuad(int x, int z, int top) {
+        for (int t = 0; t < 2; t++) {
+            int a = 0, b = t == 0 ? 1 : 2, c = t == 0 ? 2 : 3;
+            int[] corners = {a, b, c};
+            float cx = 0.0F, cz = 0.0F;
+            for (int k = 0; k < 3; k++) {
+                float px = x + (CORNER_U[corners[k]] > 0.5F ? 1 : 0);
+                float pz = z + (CORNER_V[corners[k]] > 0.5F ? 1 : 0);
+                this.tri[k * 3] = px;
+                this.tri[k * 3 + 1] = top;
+                this.tri[k * 3 + 2] = pz;
+                cx += px / 3.0F;
+                cz += pz / 3.0F;
+            }
+            if (BorderWarp.brokenOff(cx, top, cz, this.level.width, this.level.height)) {
+                continue;
+            }
+            BorderWarp.warpTriangle(this.tri, cx, top, cz, this.level.width, this.level.height);
+            for (int k = 0; k < 3; k++) {
+                glTexCoord2f(CORNER_U[corners[k]], CORNER_V[corners[k]]);
+                glVertex3f(this.tri[k * 3], this.tri[k * 3 + 1] - top, this.tri[k * 3 + 2]);
+            }
+        }
+    }
+
     // land next to the water at the surface level: a column the sea hasn't reached, or a tile in the surface cell that covers the whole cell
     // and sticks up through the water. partial shapes are not walls, they go through fillRects
-    private boolean solid(LiquidLayer liquids, int x, int z, int top) {
+    private boolean solid(LiquidLayer liquids, int x, int z, int top, boolean fromOutside) {
         if (x < 0 || z < 0 || x >= this.level.width || z >= this.level.height) {
-            return false;
+            if (!fromOutside) {
+                return false;
+            }
+            // a copy past the edge looks at the copies around it, which are the edge column again
+            x = Math.max(0, Math.min(this.level.width - 1, x));
+            z = Math.max(0, Math.min(this.level.height - 1, z));
         }
         if (liquids.columnThreshold(x, z) >= top) {
             // dry land, unless the sea has flooded it with real water tiles: those draw their own surface at the same height, and a

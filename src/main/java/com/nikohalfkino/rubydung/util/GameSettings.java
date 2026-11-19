@@ -24,16 +24,17 @@ public final class GameSettings {
     public static final int MAX_PIXEL_SIZE = 4;
     public static final int DEFAULT_PIXEL_SIZE = 2;
 
-    /** Fit = scaled to fit with black bars, Expand = UI fills the window, Bordered = 800x600 centred on black. maximized and fullscreen each have their own */
+    /** Fit = scaled to fit with black bars, Expand = UI fills the window, Bordered = 800x600 centred on black. fullscreen has its own layout, a plain window always uses Expand */
     public enum LayoutMode { FIT, EXPAND, BORDERED }
 
-    /** plain resizable window, maximized to the desktop work area, or exclusive fullscreen */
-    public enum DisplayType { WINDOWED, MAXIMIZED, FULLSCREEN }
+    /** plain resizable window (its own maximize button works as usual) or exclusive fullscreen */
+    public enum DisplayType { WINDOWED, FULLSCREEN }
 
     /** chunks (16 blocks) drawn around the camera, 0 = no limit */
     public static final int UNLIMITED_RENDER_DISTANCE = 0;
     public static final int MIN_RENDER_DISTANCE = 4;
     public static final int MAX_RENDER_DISTANCE = 32;
+    public static final int DEFAULT_RENDER_DISTANCE = 25;
 
     public static final int UNCAPPED_FPS = 0;
     private static final int[] FPS_CAP_STEPS = {30, 60, 120, 144, 240, UNCAPPED_FPS};
@@ -44,7 +45,10 @@ public final class GameSettings {
     private static boolean showFpsInHud = true;
     private static boolean pixelationEnabled = true;
     private static int pixelSize = DEFAULT_PIXEL_SIZE;
-    private static int renderDistance = UNLIMITED_RENDER_DISTANCE;
+    private static int renderDistance = DEFAULT_RENDER_DISTANCE;
+    // the logo splash and the flashing lights warning shown on start up
+    private static boolean showSplashScreen = true;
+    private static boolean showFlashingWarning = true;
     private static float musicVolume = 0.15f;
     private static float sfxVolume = 0.8f;
     private static String username = DEFAULT_USERNAME;
@@ -54,7 +58,6 @@ public final class GameSettings {
     // last non-fullscreen state so F11 can go back to it, not saved
     private static DisplayType lastWindowType = DisplayType.WINDOWED;
     private static LayoutMode fullscreenMode = LayoutMode.EXPAND;
-    private static LayoutMode maximizedMode = LayoutMode.EXPAND;
 
     private GameSettings() {
     }
@@ -181,14 +184,6 @@ public final class GameSettings {
         fullscreenMode = mode == null ? LayoutMode.EXPAND : mode;
     }
 
-    public static LayoutMode getMaximizedMode() {
-        return maximizedMode;
-    }
-
-    public static void setMaximizedMode(LayoutMode mode) {
-        maximizedMode = mode == null ? LayoutMode.EXPAND : mode;
-    }
-
     public static boolean isShowFpsInHud() {
         return showFpsInHud;
     }
@@ -211,6 +206,22 @@ public final class GameSettings {
 
     public static void setPixelSize(int size) {
         pixelSize = Math.max(MIN_PIXEL_SIZE, Math.min(MAX_PIXEL_SIZE, size));
+    }
+
+    public static boolean isShowSplashScreen() {
+        return showSplashScreen;
+    }
+
+    public static void setShowSplashScreen(boolean show) {
+        showSplashScreen = show;
+    }
+
+    public static boolean isShowFlashingWarning() {
+        return showFlashingWarning;
+    }
+
+    public static void setShowFlashingWarning(boolean show) {
+        showFlashingWarning = show;
     }
 
     public static int getRenderDistance() {
@@ -245,6 +256,8 @@ public final class GameSettings {
         pixelationEnabled = parseBoolean(props.getProperty("pixelationEnabled"), pixelationEnabled);
         setPixelSize(parseInt(props.getProperty("pixelSize"), pixelSize));
         setRenderDistance(parseInt(props.getProperty("renderDistance"), renderDistance));
+        showSplashScreen = parseBoolean(props.getProperty("showSplashScreen"), showSplashScreen);
+        showFlashingWarning = parseBoolean(props.getProperty("showFlashingWarning"), showFlashingWarning);
         setMusicVolume(parseFloat(props.getProperty("musicVolume"), musicVolume));
         setSfxVolume(parseFloat(props.getProperty("sfxVolume"), sfxVolume));
 
@@ -259,7 +272,6 @@ public final class GameSettings {
             setDisplayType(DisplayType.FULLSCREEN); // options.txt from before display types existed
         }
         fullscreenMode = parseLayoutMode(props.getProperty("fullscreenMode"), fullscreenMode);
-        maximizedMode = parseLayoutMode(props.getProperty("maximizedMode"), maximizedMode);
 
         String savedName = props.getProperty("username");
         if (savedName != null) {
@@ -281,13 +293,14 @@ public final class GameSettings {
         props.setProperty("pixelationEnabled", Boolean.toString(pixelationEnabled));
         props.setProperty("pixelSize", Integer.toString(pixelSize));
         props.setProperty("renderDistance", Integer.toString(renderDistance));
+        props.setProperty("showSplashScreen", Boolean.toString(showSplashScreen));
+        props.setProperty("showFlashingWarning", Boolean.toString(showFlashingWarning));
         props.setProperty("musicVolume", Float.toString(musicVolume));
         props.setProperty("sfxVolume", Float.toString(sfxVolume));
         props.setProperty("username", username);
         props.setProperty("lastServer", lastServer);
         props.setProperty("displayType", displayType.name());
         props.setProperty("fullscreenMode", fullscreenMode.name());
-        props.setProperty("maximizedMode", maximizedMode.name());
 
         try (FileOutputStream out = new FileOutputStream(OPTIONS_FILE_NAME)) {
             props.store(out, "Strata video/general options - see GameSettings");

@@ -17,6 +17,7 @@ import com.nikohalfkino.rubydung.util.KeyMap;
 import org.lwjgl.input.Keyboard;
 import org.lwjgl.input.Mouse;
 import java.util.Locale;
+import java.util.function.Predicate;
 
 public class InputHandler {
 
@@ -104,6 +105,11 @@ public class InputHandler {
                         this.game.getPlayerInteraction().suppressHeldButtonsUntilReleased();
                     }
                 }
+            } else if (Mouse.getEventButtonState() && Mouse.getEventButton() >= 0
+                    && !this.game.getConsole().isOpen() && this.game.getCurrentScreen() == null) {
+                // a mouse button bound to interact, pick block and so on (break / place are read by PlayerInteraction.tick)
+                final int button = Mouse.getEventButton();
+                handleGameplayAction(binding -> binding.matchesMouseEvent(button), false);
             }
         }
     }
@@ -155,14 +161,21 @@ public class InputHandler {
             this.game.saveLevel();
         } else if (key == KeyMap.ESC) {
             this.game.openScreen(new PauseScreen(this.game, this.game.getFont()));
-        } else if (key == KeyBinding.INVENTORY.getKey()) {
+        } else {
+            handleGameplayAction(binding -> binding.matchesKeyEvent(key), key == Keyboard.KEY_RMENU);
+        }
+    }
+
+    /** the rebindable actions. hit says whether a binding was just pressed, by a key or by a mouse button */
+    private void handleGameplayAction(Predicate<KeyBinding> hit, boolean rightAlt) {
+        if (hit.test(KeyBinding.INVENTORY)) {
             // the tile selection is locked while a cube is carried
             if (!this.game.getPlayerInteraction().isHoldingCube()) {
                 this.game.openScreen(new InventoryScreen(this.game));
             }
-        } else if (key == KeyBinding.CHAT.getKey() && this.game.hasWorld()) {
+        } else if (hit.test(KeyBinding.CHAT) && this.game.hasWorld()) {
             this.game.openScreen(new ChatScreen(this.game));
-        } else if (key == KeyBinding.INTERACT.getKey()) {
+        } else if (hit.test(KeyBinding.INTERACT)) {
             // A weighted cube: drops the one in the hands, or picks up the one under the crosshair.
             if (this.game.getPlayerInteraction().interactWithCube()) {
                 return;
@@ -182,25 +195,33 @@ public class InputHandler {
                         ? "Dimensional doors do not work in a LAN game"
                         : "Dimensional doors are off on this server (it needs more than one world)");
             }
-        } else if (key == KeyBinding.KNOCK.getKey()) {
+        } else if (hit.test(KeyBinding.PLACE_RAGDOLL)) {
+            if (this.game.hasWorld()) {
+                this.game.getPlayerInteraction().placeRagdoll();
+            }
+        } else if (hit.test(KeyBinding.KNOCK)) {
+            // the secondary interaction: freezes the carried ragdoll limb where it is (or frees a frozen ragdoll under the crosshair), else
+            if (this.game.getPlayerInteraction().freezeCube()) {
+                return;
+            }
             // knocks if a closed door is under the crosshair, otherwise (a secret) pats the player there
             if (!this.game.getPlayerInteraction().knock() && this.game.hasWorld()) {
                 this.game.getPlayerInteraction().pat();
             }
-        } else if (key == KeyBinding.DEBUG_HUD.getKey()) {
+        } else if (hit.test(KeyBinding.DEBUG_HUD)) {
             this.game.getDebugHud().toggle();
-        } else if (key == KeyBinding.PICK_BLOCK.getKey() || key == Keyboard.KEY_RMENU) {
+        } else if (hit.test(KeyBinding.PICK_BLOCK) || rightAlt) {
             if (!this.game.getPlayerInteraction().isHoldingCube()) {
                 this.game.getPlayerInteraction().pickTargetedTile();
             }
-        } else if (key == KeyBinding.FLY_TOGGLE.getKey()) {
+        } else if (hit.test(KeyBinding.FLY_TOGGLE)) {
             Player player = this.game.getPlayer();
             player.flying = !player.flying;
             if (!player.flying) {
                 player.noClip = false;
             }
             this.game.getCenterIndicator().showMessage(player.flying ? "Flying Enabled" : "Flying Disabled");
-        } else if (key == KeyBinding.NOCLIP_TOGGLE.getKey()) {
+        } else if (hit.test(KeyBinding.NOCLIP_TOGGLE)) {
             Player player = this.game.getPlayer();
             player.noClip = !player.noClip;
             if (player.noClip) {
@@ -209,14 +230,14 @@ public class InputHandler {
                 player.flying = false;
             }
             this.game.getCenterIndicator().showMessage(player.noClip ? "Noclip Enabled" : "Noclip Disabled");
-        } else if (key == KeyBinding.CAMERA_VIEW.getKey() && this.game.hasWorld()) {
+        } else if (hit.test(KeyBinding.CAMERA_VIEW) && this.game.hasWorld()) {
             PlayerCamera camera = this.game.getGameRenderer().getPlayerCamera();
             if (camera.cycleView()) {
                 this.game.getCenterIndicator().showMessage(camera.getView().displayName());
             } else {
                 this.game.getCenterIndicator().showMessage("Turn off the freecam first");
             }
-        } else if (key == KeyBinding.SCREENSHOT.getKey()) {
+        } else if (hit.test(KeyBinding.SCREENSHOT)) {
             this.game.takeScreenshot(2);
             this.game.getCenterIndicator().showMessage("Screenshot Saved");
         }

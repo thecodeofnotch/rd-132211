@@ -12,6 +12,10 @@ public final class FpsHud {
 
     private static final int LINE_HEIGHT = (int) (10 * SCALE);
 
+    // the text is only built again when the rounded fps changes (String.format every frame is slow and makes garbage)
+    private static int lastFps = Integer.MIN_VALUE;
+    private static String lastText = "";
+
     private FpsHud() {
     }
 
@@ -24,7 +28,12 @@ public final class FpsHud {
             return;
         }
 
-        String text = String.format("%.0f fps", game.getFps());
+        int fps = (int) Math.round(game.getFps());
+        if (fps != lastFps) {
+            lastFps = fps;
+            lastText = fps + " fps";
+        }
+        String text = lastText;
 
         Gui2D.begin(width, height);
 

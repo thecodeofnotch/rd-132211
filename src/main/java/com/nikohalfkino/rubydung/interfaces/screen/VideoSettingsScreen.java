@@ -83,23 +83,17 @@ public class VideoSettingsScreen extends MenuScreen {
         // display
         col.add(new Label("Display").setColor(UiStyle.TEXT_DIM), HEADER_GAP);
 
-        // Windowed -> Maximized -> Fullscreen. F11 jumps in and out of fullscreen.
+        // Windowed <-> Fullscreen. F11 jumps in and out of fullscreen.
         col.add(new Button(() -> "Window: " + typeName(GameSettings.getDisplayType()),
                 COLUMN_WIDTH, UiStyle.BUTTON_HEIGHT, true)
                 .onClick(() -> {
-                    DisplayType[] types = DisplayType.values();
-                    GameSettings.setDisplayType(types[(GameSettings.getDisplayType().ordinal() + 1) % types.length]);
+                    GameSettings.setDisplayType(GameSettings.isFullscreen()
+                            ? DisplayType.WINDOWED : DisplayType.FULLSCREEN);
                     GameSettings.save();
                     this.game.applyDisplay();
                 }), SECTION_GAP);
 
-        // Each of these has its own layout; a change applies at once if that one is in use.
-        col.add(new Label("Maximized Layout").setColor(UiStyle.TEXT_DIM), HEADER_GAP);
-        col.add(layoutRow(GameSettings.getMaximizedMode(), m -> {
-            GameSettings.setMaximizedMode(m);
-            return GameSettings.getDisplayType() == DisplayType.MAXIMIZED;
-        }), SECTION_GAP);
-
+        // A change applies at once if fullscreen is in use.
         col.add(new Label("Fullscreen Layout").setColor(UiStyle.TEXT_DIM), HEADER_GAP);
         col.add(layoutRow(GameSettings.getFullscreenMode(), m -> {
             GameSettings.setFullscreenMode(m);
@@ -196,6 +190,23 @@ public class VideoSettingsScreen extends MenuScreen {
                 .onChange(on -> {
                     GameSettings.setShowFpsInHud(on);
                     GameSettings.save();
+                }), SECTION_GAP);
+
+        // start up
+        col.add(new Label("Start Up").setColor(UiStyle.TEXT_DIM), HEADER_GAP);
+
+        col.add(new Toggle("Splash Screen", GameSettings.isShowSplashScreen(), Toggle.LabelSide.LEFT)
+                .setRowWidth(COLUMN_WIDTH)
+                .onChange(on -> {
+                    GameSettings.setShowSplashScreen(on);
+                    GameSettings.save();
+                }));
+
+        col.add(new Toggle("Flashing Lights Warning", GameSettings.isShowFlashingWarning(), Toggle.LabelSide.LEFT)
+                .setRowWidth(COLUMN_WIDTH)
+                .onChange(on -> {
+                    GameSettings.setShowFlashingWarning(on);
+                    GameSettings.save();
                 }));
 
         return col;
@@ -243,8 +254,6 @@ public class VideoSettingsScreen extends MenuScreen {
 
     private static String typeName(DisplayType type) {
         switch (type) {
-            case MAXIMIZED:
-                return "Maximized";
             case FULLSCREEN:
                 return "Fullscreen (F11)";
             default:

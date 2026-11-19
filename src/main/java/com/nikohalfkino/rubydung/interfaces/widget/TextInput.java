@@ -6,6 +6,8 @@ import com.nikohalfkino.rubydung.interfaces.UiStyle;
 import com.nikohalfkino.rubydung.render.Font;
 import com.nikohalfkino.rubydung.util.KeyMap;
 
+import java.util.function.Supplier;
+
 /**
  * single-line text box: translucent dark background, a fixed prefix ("Name: ") and the typed text, blinking cursor and mouse selection while focused. wraps TextField, which does the editing
  *
@@ -22,6 +24,9 @@ public class TextInput extends Widget {
     private Runnable onCommit;
 
     private Font lastFont;
+
+    // greyed suggestion shown while the box is empty and not focused (clicking the box hides it)
+    private Supplier<String> placeholder;
 
     public TextInput(String prefix, float width, float height, int maxLength) {
         this.prefix = prefix;
@@ -44,6 +49,12 @@ public class TextInput extends Widget {
     /** on: typed characters show as asterisks (passwords) */
     public TextInput setMasked(boolean masked) {
         this.field.setMasked(masked);
+        return this;
+    }
+
+    /** greyed text after the prefix while the box is empty and not focused, re-read every frame (null / "" = nothing) */
+    public TextInput setPlaceholder(Supplier<String> placeholder) {
+        this.placeholder = placeholder;
         return this;
     }
 
@@ -134,7 +145,13 @@ public class TextInput extends Widget {
             this.field.updateMouse(mouseX, mouseY, textX, textY, font, this.prefix);
             this.field.render(font, textX, textY, UiStyle.TEXT, this.prefix);
         } else {
-            font.drawString(this.prefix + this.field.getDisplayText(), textX, textY, UiStyle.TEXT);
+            String hint = this.placeholder == null ? null : this.placeholder.get();
+            if (hint != null && !hint.isEmpty() && this.field.getText().isEmpty()) {
+                font.drawString(this.prefix, textX, textY, UiStyle.TEXT);
+                font.drawString(hint, textX + (int) font.width(this.prefix), textY, UiStyle.TEXT_DISABLED);
+            } else {
+                font.drawString(this.prefix + this.field.getDisplayText(), textX, textY, UiStyle.TEXT);
+            }
         }
     }
 }

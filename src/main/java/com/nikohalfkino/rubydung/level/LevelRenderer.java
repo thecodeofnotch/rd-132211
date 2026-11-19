@@ -32,6 +32,8 @@ public class LevelRenderer implements LevelListener {
     private final Level level;
     private final Chunk[] chunks;
     private final OceanSurface ocean;
+    // the fake terrain past the world's edge
+    private final WorldBorderRenderer border;
 
     private final int chunkAmountX;
     private final int chunkAmountY;
@@ -43,6 +45,7 @@ public class LevelRenderer implements LevelListener {
         this.tessellator = new Tessellator();
         this.level = level;
         this.ocean = new OceanSurface(level);
+        this.border = new WorldBorderRenderer(level);
 
         // rounded up, so a world whose size isn't a multiple of CHUNK_SIZE still has a (smaller) chunk on its edge
         this.chunkAmountX = (level.width + CHUNK_SIZE - 1) / CHUNK_SIZE;
@@ -183,6 +186,12 @@ public class LevelRenderer implements LevelListener {
             }
         } finally {
             TerrainShader.unbind();
+        }
+
+        // the fringe past the edge, with the sea set above (it tints what is under water the same way)
+        if (layer == 0) {
+            int distance = GameSettings.getRenderDistance();
+            this.border.draw(this.level.getSkyAmbient(), this.viewX, this.viewZ, distance <= 0 ? 0.0 : distance * (double) CHUNK_SIZE);
         }
     }
 
@@ -630,33 +639,25 @@ public class LevelRenderer implements LevelListener {
         FrameProfiler.lap("bb-draw");
     }
 
-    private void drawBillboardAuraLists() {
-        if (this.billboardAuraCutoutIds.limit() > 0) {
-            glCallLists(this.billboardAuraCutoutIds);
-        }
-        if (this.billboardAuraIds.limit() > 0) {
-            glCallLists(this.billboardAuraIds);
-        }
-    }
-
-    private IntBuffer billboardAuraCutoutIds = BufferUtils.createIntBuffer(1024);
-    private IntBuffer billboardAuraIds = BufferUtils.createIntBuffer(1024);
+    // the glows' display lists of the culled chunks: only sprites that have an aura are in them (see Chunk.LAYER_AURA_ALPHA)
+    private IntBuffer auraAlphaIds = BufferUtils.createIntBuffer(256);
+    private IntBuffer auraScreenIds = BufferUtils.createIntBuffer(256);
     private int billboardAuraChunkCount = 0;
 
     /**
      * The glow of the sprites that have one (BillboardAura). Call it after renderLiquids: it is blended over everything
      * already drawn, far to near, and it reads the depth buffer without writing it, so the water, the sprites and the glows
      * behind it still show through, which they did not when the glow was drawn with its sprite and wrote depth.
-     * Uses the chunk order renderBillboards just sorted.
+     * Uses the chunk order renderBillboards just sorted. Draws only the glows' own lists, so a view without any glow costs nothing here
      */
     public void renderBillboardAuras(float cameraYaw, double eyeX, double eyeY, double eyeZ) {
         int count = this.billboardAuraChunkCount;
         if (count == 0 || Double.isNaN(eyeX)) {
             return;
         }
-        this.billboardAuraCutoutIds = fillBillboardIds(this.billboardAuraCutoutIds, Chunk.LAYER_BILLBOARD_CUTOUT, count, false);
-        this.billboardAuraIds = fillBillboardIds(this.billboardAuraIds, Chunk.LAYER_BILLBOARD, count, false);
-        if (this.billboardAuraCutoutIds.limit() == 0 && this.billboardAuraIds.limit() == 0) {
+        this.auraAlphaIds = fillBillboardIds(this.auraAlphaIds, Chunk.LAYER_AURA_ALPHA, count, false);
+        this.auraScreenIds = fillBillboardIds(this.auraScreenIds, Chunk.LAYER_AURA_SCREEN, count, false);
+        if (this.auraAlphaIds.limit() == 0 && this.auraScreenIds.limit() == 0) {
             return;
         }
 
@@ -679,14 +680,18 @@ public class LevelRenderer implements LevelListener {
             Textures.bind(Chunk.getAtlasTexture());
 
             // the colour is premultiplied by the shader: src + dst * (1 - alpha) is NORMAL (alpha = the opacity) and ADD (alpha 0)
-            StaticBillboardShader.setAuraPass(1);
-            glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
-            drawBillboardAuraLists();
+            if (this.auraAlphaIds.limit() > 0) {
+                StaticBillboardShader.setAuraPass(1);
+                glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+                glCallLists(this.auraAlphaIds);
+            }
 
             // SCREEN: src + dst * (1 - src), per channel
-            StaticBillboardShader.setAuraPass(2);
-            glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_COLOR);
-            drawBillboardAuraLists();
+            if (this.auraScreenIds.limit() > 0) {
+                StaticBillboardShader.setAuraPass(2);
+                glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_COLOR);
+                glCallLists(this.auraScreenIds);
+            }
         } finally {
             glDepthMask(depthMask);
             if (!blend) {
@@ -975,11 +980,15 @@ public class LevelRenderer implements LevelListener {
     @Override
     public void tileChanged(int x, int y, int z) {
         this.ocean.cellChanged(x, y, z);
+        if (this.border.isEdgeColumn(x, z)) {
+            this.border.markDirty(x, z);
+        }
         setDirty(x - 1, y - 2, z - 1, x + 1, y + 2, z + 1, true);
     }
 
     @Override
     public void allChanged() {
+        this.border.markDirty();
         setDirty(0, 0, 0, this.level.width, this.level.depth, this.level.height);
     }
 }

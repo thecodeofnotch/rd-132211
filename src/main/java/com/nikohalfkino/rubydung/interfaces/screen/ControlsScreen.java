@@ -78,7 +78,7 @@ public class ControlsScreen extends MenuScreen {
 
         // Hint line, centred over the panel's content width.
         Label hint = panel.add(new Label(() -> this.listeningFor != null
-                        ? "Press any key or mouse button"
+                        ? (this.listeningFor.isMouseBindable() ? "Press any key or mouse button" : "Press a key (this one can't use the mouse)")
                         : "Click a key to rebind it")
                         .setColor(UiStyle.TEXT_DIM)
                         .setMaxWidth((int) PANEL_WIDTH),
@@ -201,6 +201,10 @@ public class ControlsScreen extends MenuScreen {
     @Override
     public void mouseClicked(int mouseX, int mouseY, int button) {
         if (this.listeningFor != null) {
+            if (!this.listeningFor.isMouseBindable()) {
+                // inventory, chat and the console read keys only: keep listening for a key instead of saving something that does nothing
+                return;
+            }
             if (this.pendingModifierDevice != null) {
                 this.listeningFor.setBinding(this.pendingModifierDevice, this.pendingModifierCode,
                         KeyBinding.Device.MOUSE, button);

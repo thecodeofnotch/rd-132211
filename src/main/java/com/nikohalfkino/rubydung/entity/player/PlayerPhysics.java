@@ -48,6 +48,8 @@ public class PlayerPhysics {
     public static final double HALF_WIDTH = 0.3D;
     public static final double HEIGHT = 1.8D;
     public static final double EYE_HEIGHT = 1.62D;
+    /** how far under the top of the box the point is that has to be in the liquid for the head to count as under it */
+    private static final double HEAD_TOP_MARGIN = 0.05D;
 
     // ---- movevars ----
     /** walking is slower than Quake's 320 units/s (10 blocks/s): 0.7 = 7 blocks/s. 1.0 = Quake */
@@ -105,6 +107,7 @@ public class PlayerPhysics {
 
     private boolean onGround;
     private int waterLevel;            // 0 dry, 1 feet, 2 waist, 3 head
+    private boolean headUnder;         // the top of the head (the top of the box, not the eyes) is under the surface
     private LiquidTile waterType;      // liquid at the feet, null when waterLevel == 0
     private double waterJumpTime;
     private boolean oldJump;           // BUTTON_JUMP in oldbuttons
@@ -138,6 +141,8 @@ public class PlayerPhysics {
     /** how fast the head hit something overhead during the last move, going up (blocks per second), 0 if it did not. CubeManager turns it into the bounce of a cube above */
     public double getCeilingHitSpeed() { return this.ceilingHitSpeed; }
     public int getWaterLevel()       { return this.waterLevel; }
+    /** the whole head is under the surface: goes by the top of the body, so it does not depend on where the eyes are or where the player looks. the swimming sounds use it */
+    public boolean isHeadUnder()     { return this.headUnder; }
     public LiquidTile getWaterType() { return this.waterType; }
 
     /** what the inputs asked for in the last command (wish direction * wish speed), blocks per second. debug overlay only */
@@ -155,6 +160,7 @@ public class PlayerPhysics {
         this.onGround = false;
         this.waterLevel = 0;
         this.waterType = null;
+        this.headUnder = false;
     }
 
     public AABB buildBox() {
@@ -745,6 +751,7 @@ public class PlayerPhysics {
         // get waterlevel
         this.waterLevel = 0;
         this.waterType = null;
+        this.headUnder = false;
 
         LiquidTile liquid = liquidAt(this.origin[X], this.origin[Y] + 1 * U, this.origin[Z]);
         if (liquid != null) {
@@ -755,6 +762,7 @@ public class PlayerPhysics {
                 if (liquidAt(this.origin[X], this.origin[Y] + EYE_HEIGHT, this.origin[Z]) != null) {
                     this.waterLevel = 3;
                 }
+                this.headUnder = liquidAt(this.origin[X], this.origin[Y] + HEIGHT - HEAD_TOP_MARGIN, this.origin[Z]) != null;
             }
         }
     }
@@ -875,6 +883,7 @@ public class PlayerPhysics {
         this.onGround = false;
         this.waterLevel = 0;
         this.waterType = null;
+        this.headUnder = false;
         this.waterJumpTime = 0;
 
         double flySpeed = BASE_FLY_SPEED * this.spectatorSpeedScale;

@@ -1,0 +1,77 @@
+# Random world names for the "New World" screen (the Random button next to the name box).
+#
+# A name is built by picking one pattern, then replacing every {category} in it with a random word from
+# [words].category. The first letter of the finished name is always capitalised.
+#
+#   "The {adjective} {location} of {noun}"   ->   "The Murky Hollow of Echoes"
+#
+# - Any key in [words] is a category and can be used in a pattern as {key}. Add as many as you like.
+# - A pattern that uses a category that doesn't exist (or is empty) is skipped and reported in the log.
+# - Every pattern is equally likely: to make one more common, list it more than once.
+# - Names longer than the name box (32 characters) or already used by a world are thrown away and a new one is picked,
+#   so very long words just make that combination rarer.
+# - Keep to letters, digits and spaces: the name is also the world's folder name.
+#
+# Format modeled on the Terraria world names: https://terraria.wiki.gg/wiki/World/Name
+
+[names]
+patterns = [
+    "The {adjective} {location} of {noun}",
+    "{adjective} {location} of {noun}",
+    "The {adjective} {location}",
+    "{adjective} {location}",
+    "The {location} of {noun}",
+    "{location} of {noun}",
+]
+
+# Example of a new category: uncomment these, then add "The {color} {location}" to the patterns above.
+# [words]
+# color = ["Crimson", "Ashen", "Indigo"]
+
+[words]
+adjective = [
+    "Abandoned", "Ancient", "Ashen", "Austere", "Bitter", "Black", "Bleak", "Blighted", "Blooming", "Blue",
+    "Bold", "Brittle", "Broken", "Bright", "Buried", "Calm", "Cold", "Crimson", "Cruel", "Crumbling",
+    "Cursed", "Dark", "Dazzling", "Dead", "Deep", "Desolate", "Distant", "Dreaming", "Drowned", "Dusty",
+    "Eerie", "Empty", "Endless", "Envious", "Eternal", "Faded", "Fallen", "Feral", "Fierce", "Foggy",
+    "Forgotten", "Forsaken", "Fragile", "Frozen", "Gentle", "Ghostly", "Gilded", "Gloomy", "Golden", "Grand",
+    "Grim", "Hallowed", "Haunted", "Hazy", "Heavy", "Hidden", "Hollow", "Hushed", "Idle", "Infinite",
+    "Jagged", "Jolly", "Lazy", "Lonely", "Lost", "Lucid", "Lush", "Mad", "Meek", "Misty",
+    "Moldy", "Mossy", "Murky", "Mysterious", "Nameless", "Narrow", "Nervous", "Odd", "Old", "Pale",
+    "Patient", "Peaceful", "Petty", "Pristine", "Proud", "Quiet", "Radiant", "Restless", "Rotten", "Rusty",
+    "Sacred", "Salty", "Savage", "Scarlet", "Secret", "Serene", "Shattered", "Silent", "Silver", "Sinister",
+    "Sleepy", "Sloppy", "Smoldering", "Sodden", "Solemn", "Sour", "Spooky", "Stormy", "Strange", "Sunken",
+    "Tangled", "Tender", "Timeless", "Tiny", "Tired", "Twisted", "Umber", "Unknown", "Untamed", "Vacant",
+    "Vast", "Verdant", "Vivid", "Wandering", "Weary", "Weeping", "Whispering", "Wicked", "Wild", "Withered",
+]
+
+location = [
+    "Abyss", "Alcove", "Altar", "Archive", "Arena", "Atrium", "Badlands", "Barrow", "Basin", "Bastion",
+    "Bay", "Bluff", "Bog", "Bridge", "Burrow", "Canopy", "Canyon", "Catacomb", "Cavern", "Cellar",
+    "Chamber", "Chasm", "Citadel", "Cliff", "Cloister", "Coast", "Colony", "Core", "Court", "Cove",
+    "Crater", "Crossing", "Crypt", "Dale", "Delta", "Den", "Depths", "Desert", "Dome", "Dune",
+    "Dungeon", "Edge", "Empire", "Expanse", "Fen", "Field", "Fjord", "Forest", "Forge", "Fortress",
+    "Garden", "Gate", "Glade", "Grotto", "Grove", "Gulch", "Harbor", "Haven", "Heath", "Heights",
+    "Hideout", "Highland", "Hill", "Hive", "Hollow", "Isle", "Jungle", "Keep", "Kingdom", "Labyrinth",
+    "Lagoon", "Lair", "Lake", "Lowlands", "Maze", "Meadow", "Mesa", "Mine", "Mire", "Moor",
+    "Mountain", "Oasis", "Orchard", "Outpost", "Pasture", "Peak", "Pit", "Plains", "Plateau", "Pond",
+    "Quarry", "Ravine", "Reach", "Realm", "Reef", "Refuge", "Retreat", "Ridge", "Rift", "River",
+    "Ruins", "Sanctum", "Shallows", "Shore", "Shrine", "Sinkhole", "Spire", "Spring", "Steppe", "Strait",
+    "Summit", "Swamp", "Temple", "Thicket", "Tomb", "Tower", "Trench", "Tundra", "Tunnel", "Underworld",
+    "Vale", "Valley", "Vault", "Village", "Void", "Warren", "Wasteland", "Well", "Wilds", "Woods",
+]
+
+noun = [
+    "Ash", "Bones", "Bread", "Bubbles", "Candles", "Chaos", "Clocks", "Clouds", "Coins", "Courage",
+    "Crows", "Crystals", "Dawn", "Decay", "Despair", "Dust", "Echoes", "Embers", "Envy", "Feathers",
+    "Fire", "Fireflies", "Fish", "Flowers", "Fog", "Frogs", "Ghosts", "Giants", "Glass", "Gold",
+    "Grief", "Hope", "Hunger", "Ice", "Iron", "Joy", "Kings", "Knives", "Laughter", "Leaves",
+    "Lies", "Light", "Lilies", "Lost Souls", "Love", "Madness", "Marbles", "Memories", "Mercy", "Mirrors",
+    "Moss", "Moths", "Mud", "Music", "Mystery", "Needles", "Night", "Nightmares", "Oblivion", "Owls",
+    "Pain", "Pebbles", "Pennies", "Pride", "Puppets", "Rain", "Regret", "Riddles", "Roots", "Rust",
+    "Sand", "Secrets", "Shadows", "Silence", "Silk", "Skulls", "Sleep", "Smoke", "Snow", "Songs",
+    "Sorrow", "Sparks", "Spiders", "Spirits", "Stars", "Stone", "Storms", "Sugar", "Sunlight", "Teeth",
+    "Thieves", "Thorns", "Thunder", "Time", "Toads", "Trees", "Truth", "Twilight", "Vines", "Wasps",
+    "Whispers", "Winter", "Wolves", "Wonder", "Worms", "the Ancients", "the Deep", "the Dead", "the Fool",
+    "the King", "the Moon", "the Old Gods", "the Queen", "the Sun", "the Tide", "the Unknown", "the Wanderer", "the World",
+]

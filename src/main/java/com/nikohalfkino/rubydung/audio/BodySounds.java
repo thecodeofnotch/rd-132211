@@ -28,9 +28,13 @@ public final class BodySounds {
 
     private static final double ENTER_FULL_SPEED = 10.0D;
 
-    /** moving slower than this in the water is floating, not treading (blocks/s) */
-    private static final double TREAD_MIN_SPEED = 0.6D;
-    private static final double TREAD_INTERVAL = 0.55D;
+    /** moving slower than this under water is drifting, not swimming (blocks/s) */
+    private static final double TREAD_MIN_SPEED = 1.5D;
+    /** seconds between two swimming sounds: it is a stroke now and then, not a loop */
+    private static final double TREAD_INTERVAL = 1.1D;
+
+    /** the going-in splash needs the body to have been out of the water (above the waist) this long (ticks), so wading about at the edge does not splash again and again */
+    private static final int ENTER_REARM_TICKS = 40;
 
     private static final float JUMP_STRENGTH = 0.6F;
 
@@ -45,50 +49,77 @@ public final class BodySounds {
     private double lastVy;
     private double treadTimer;
 
+    // a walking body: whether it was in the water to the waist last tick, and for how long it has not been
+    private boolean wasImmersed;
+    private int outTicks = ENTER_REARM_TICKS;
+
     /** forget what happened before: the body was moved somewhere else or started flying, the next tick only looks */
     public void reset() {
         this.primed = false;
+        this.wasImmersed = false;
+        this.outTicks = ENTER_REARM_TICKS;
+        this.treadTimer = 0.0D;
     }
 
     /**
      * a walking body. vy is its vertical speed and horizontal its speed along the ground (blocks/s), waterLevel is
-     * 0 dry, 1 feet, 2 waist, 3 head. volume scales everything (distance, or 1.0 for the player's own)
+     * 0 dry, 1 feet, 2 waist, 3 head. headUnder says that the whole head is under the surface: it is worked out from the
+     * top of the body and not from where the eyes (the camera) are, so it does not change with how the player looks or
+     * with how tall the view is. volume scales everything (distance, or 1.0 for the player's own)
+     *
+     * what is heard, and when:
+     *  - the jump and the landing (on dry ground only)
+     *  - the splash of going into the water: once the body is in to the waist, and not again until it has been out of
+     *    it for a while (ENTER_REARM_TICKS), so wading about at the edge is quiet
+     *  - the swimming sound: only with the head under, a stroke every TREAD_INTERVAL while moving
+     *
+     * returns true when it made a loud sound (a jump, a landing, the splash): the footsteps keep quiet for a moment
+     * after one, so they do not play over it
      */
-    public void tick(double vy, double horizontal, boolean onGround, int waterLevel, double seconds,
-                     float volume, Listener listener) {
-        boolean wet = waterLevel >= 1;
+    public boolean tick(double vy, double horizontal, boolean onGround, int waterLevel, boolean headUnder,
+                        double seconds, float volume, Listener listener) {
+        boolean immersed = waterLevel >= 2;
+        boolean loud = false;
+
+        // the swimming timer only runs down, it is not reset by the head coming out: bobbing at the surface does not make a stroke every time
+        this.treadTimer = Math.max(0.0D, this.treadTimer - seconds);
 
         if (!this.primed) {
             this.primed = true;
         } else {
-            if (wet && !this.wasWet) {
-                emit(WATER_ENTER, strengthOfEntering(vy, horizontal), volume, listener);
-            } else if (!wet) {
-                if (this.wasOnGround && !onGround && vy > 0.0D && waterLevel == 0) {
+            if (immersed && !this.wasImmersed) {
+                if (this.outTicks >= ENTER_REARM_TICKS && Math.abs(vy) + horizontal * 0.5D >= SPLASH_MIN_SPEED) {
+                    emit(WATER_ENTER, strengthOfEntering(vy, horizontal), volume, listener);
+                    this.treadTimer = TREAD_INTERVAL;   // the first stroke does not come on top of the splash
+                    loud = true;
+                }
+            } else if (waterLevel == 0) {
+                if (this.wasOnGround && !onGround && vy > 0.0D) {
                     emit(JUMP, JUMP_STRENGTH, volume, listener);
+                    loud = true;
                 } else if (!this.wasOnGround && onGround) {
                     double fall = -Math.min(vy, this.lastVy);
                     if (fall >= LAND_MIN_SPEED) {
                         emit(LAND, (float) clamp(fall / LAND_FULL_SPEED, 0.3D, 1.0D), volume, listener);
+                        loud = true;
                     }
                 }
             }
 
-            if (waterLevel >= 2) {
+            if (headUnder) {
                 double speed = Math.max(horizontal, Math.abs(vy));
-                this.treadTimer -= seconds;
                 if (speed >= TREAD_MIN_SPEED && this.treadTimer <= 0.0D) {
                     this.treadTimer = TREAD_INTERVAL;
-                    emit(WATER_TREAD, (float) clamp(0.35D + speed / 12.0D, 0.35D, 0.8D), volume, listener);
+                    emit(WATER_TREAD, (float) clamp(0.3D + speed / 14.0D, 0.3D, 0.6D), volume, listener);
                 }
-            } else {
-                this.treadTimer = 0.0D;
             }
         }
 
+        this.outTicks = immersed ? 0 : Math.min(this.outTicks + 1, ENTER_REARM_TICKS);
+        this.wasImmersed = immersed;
         this.wasOnGround = onGround;
-        this.wasWet = wet;
         this.lastVy = vy;
+        return loud;
     }
 
     /**
@@ -141,6 +172,29 @@ public final class BodySounds {
             default:
                 break;
         }
+    }
+
+    /** below this the hit of a ragdoll is a limb flopping, from it on a body thudding */
+    private static final float RAGDOLL_THUD_GAIN = 0.4F;
+
+    /** a ragdoll hit a wall, the floor, something else or a player: a soft flop for a light knock, a dull thud for a hard one (gain is strength times how near it is) */
+    public static void ragdollImpact(float gain) {
+        if (gain <= 0.001F) {
+            return;
+        }
+        if (gain >= RAGDOLL_THUD_GAIN) {
+            SoundEffects.play("ragdoll_thud", Math.min(1.0F, gain));
+        } else {
+            SoundEffects.play("ragdoll_flop", Math.min(1.0F, gain * 1.6F));
+        }
+    }
+
+    /** a ragdoll went into the water: a bigger, lower splash than a cube makes */
+    public static void ragdollSplash(float gain) {
+        if (gain <= 0.001F) {
+            return;
+        }
+        SoundEffects.play("ragdoll_splash", Math.min(1.0F, gain));
     }
 
     /** a pat: the pat, then the purr a moment later */

@@ -4,10 +4,13 @@ import com.nikohalfkino.rubydung.RubyDung;
 import com.nikohalfkino.rubydung.interfaces.TileIconRenderer;
 import com.nikohalfkino.rubydung.interfaces.widget.Anchor;
 import com.nikohalfkino.rubydung.interfaces.widget.Widget;
+import com.nikohalfkino.rubydung.level.tiles.special.ColoredDiceTile;
+import com.nikohalfkino.rubydung.level.tiles.special.DiceTile;
 import com.nikohalfkino.rubydung.level.tiles.special.DimensionalDoorTile;
 import com.nikohalfkino.rubydung.level.tiles.Tile;
 import com.nikohalfkino.rubydung.level.tiles.special.TreeTile;
 import com.nikohalfkino.rubydung.render.Font;
+import com.nikohalfkino.rubydung.render.RagdollRenderer;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -118,6 +121,7 @@ public class SelectedTileHud extends Widget {
     private static String tileName(Tile tile) {
         if (tile instanceof TreeTile) return "Tree";
         if (tile instanceof DimensionalDoorTile) return "Dimensional Door";
+        if (tile instanceof DiceTile || tile instanceof ColoredDiceTile) return "Dice";
         String group = GROUP_NAMES.get(tile);
         if (group != null) return group;
         return formatTileName(tile.name);
@@ -130,6 +134,12 @@ public class SelectedTileHud extends Widget {
         if (tile instanceof DimensionalDoorTile) {
             return ((DimensionalDoorTile) tile).getColor().getDisplayName();
         }
+        if (tile instanceof DiceTile) {
+            return "White";
+        }
+        if (tile instanceof ColoredDiceTile) {
+            return ((ColoredDiceTile) tile).getColor().displayName;
+        }
         return GROUP_TYPES.get(tile);
     }
 
@@ -137,8 +147,20 @@ public class SelectedTileHud extends Widget {
         return typeValue(tile) == null ? 1 : 2;
     }
 
+    // a ragdoll picked in the inventory is selected instead of the tile (model 0, the one the place button spawns)
+    private static final String RAGDOLL_NAME = "Ragdoll";
+    private static final float RAGDOLL_HEIGHT = ROW_HEIGHT;
+    private static final float RAGDOLL_SPIN_DEGREES_PER_SECOND = 40.0F;
+
+    private static boolean ragdollSelected(RubyDung game) {
+        return game.getPlayerInteraction() != null && game.getPlayerInteraction().isRagdollSelected();
+    }
+
     @Override
     protected float naturalWidth(Font font) {
+        if (ragdollSelected(this.game)) {
+            return Math.max(font.getWidth("Selected: " + RAGDOLL_NAME) * SCALE, SPACING * 3);
+        }
         Tile tile = this.game.getSelectedTile();
         float widest = font.getWidth("Selected: " + tileName(tile)) * SCALE;
         String type = typeValue(tile);
@@ -150,7 +172,15 @@ public class SelectedTileHud extends Widget {
 
     @Override
     protected float naturalHeight(Font font) {
-        return heightFor(this.game.getSelectedTile());
+        return heightFor(this.game);
+    }
+
+    /** heightFor(tile), or one text line plus the icon row while a ragdoll is selected. the chat hud asks this one */
+    public static float heightFor(RubyDung game) {
+        if (ragdollSelected(game)) {
+            return LINE_STEP + TEXT_ICON_GAP + ROW_HEIGHT;
+        }
+        return heightFor(game.getSelectedTile());
     }
 
     /**
@@ -168,12 +198,24 @@ public class SelectedTileHud extends Widget {
     @Override
     protected void draw(Font font, int mouseX, int mouseY) {
         Tile tile = this.game.getSelectedTile();
-        List<Tile> order = cycleOrder();
+        List<Tile> order = cycleOrder(tile);
 
         advance(tile, order);
 
         int left = (int) this.x;
         int top = (int) this.y;
+
+        if (ragdollSelected(this.game)) {
+            String prefix = "Selected: ";
+            font.drawStringScaled(prefix, left, top, 0xFFFFFF, SCALE);
+            font.drawStringScaled(RAGDOLL_NAME, left + (int) (font.getWidth(prefix) * SCALE), top, 0xFFFF00, SCALE);
+
+            float middle = top + LINE_STEP + TEXT_ICON_GAP + ROW_HEIGHT / 2.0F;
+            float spin = System.nanoTime() / 1.0e9F * RAGDOLL_SPIN_DEGREES_PER_SECOND;
+            RagdollRenderer.drawIcon(0, left + SPACING * 1.5F, middle, RAGDOLL_HEIGHT,
+                    (int) getRootWidth(), (int) getRootHeight(), spin % 360.0F, 1.0F);
+            return;
+        }
 
         drawText(font, tile, left, top);
 
@@ -304,12 +346,9 @@ public class SelectedTileHud extends Widget {
         }
     }
 
-    private static List<Tile> cycleOrder() {
-        List<Tile> order = new ArrayList<>();
-        for (Tile tile : Tile.getCycleOrder()) {
-            order.add(tile);
-        }
-        return order;
+    // the tiles the wheel steps through from this one: the gadgets or the rest, never both (see Tile.getCycleGroup)
+    private static List<Tile> cycleOrder(Tile selected) {
+        return new ArrayList<>(Tile.getCycleGroup(selected));
     }
 
     private static String formatTileName(String rawName) {

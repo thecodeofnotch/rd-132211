@@ -3,7 +3,7 @@ package com.nikohalfkino.rubydung.net;
 import com.nikohalfkino.rubydung.RubyDung;
 import com.nikohalfkino.rubydung.entity.CubeManager;
 import com.nikohalfkino.rubydung.entity.WorldEntity;
-import com.nikohalfkino.rubydung.entity.cube.PhysCube;
+import com.nikohalfkino.rubydung.entity.phys.PhysEntity;
 import com.nikohalfkino.rubydung.level.Level;
 import com.nikohalfkino.rubydung.level.LevelEditListener;
 import com.nikohalfkino.rubydung.level.NetworkSnapshot;
@@ -303,48 +303,68 @@ public final class GameClient implements Connection.Listener, LevelEditListener 
         }
     }
 
-    public void sendCubeSpawn(int x, int y, int z, boolean dice) {
+    public void sendCubeSpawn(int x, int y, int z, int kind) {
         if (this.connection != null && this.state == State.PLAYING) {
             this.connection.send(Protocol.C_CUBE_SPAWN, out -> {
                 out.writeInt(x);
                 out.writeInt(y);
                 out.writeInt(z);
-                out.writeBoolean(dice);
+                out.writeByte(kind);
             });
         }
     }
 
-    public void sendCubePickup(int id) {
+    public void sendCubePickup(int id, int part, double frac) {
         if (this.connection != null && this.state == State.PLAYING) {
-            this.connection.send(Protocol.C_CUBE_PICKUP, out -> out.writeInt(id));
+            int fracByte = Protocol.fracToByte(frac);
+            this.connection.send(Protocol.C_CUBE_PICKUP, out -> {
+                out.writeInt(id);
+                out.writeByte(part);
+                out.writeByte(fracByte);
+            });
         }
     }
 
     /** where the carried cube should be and how it is turned */
-    public void sendCubeHold(PhysCube cube) {
+    public void sendCubeHold(PhysEntity cube) {
         if (this.connection != null && this.state == State.PLAYING) {
             int id = cube.id;
             double x = cube.targetX, y = cube.targetY, z = cube.targetZ;
             float qw = (float) cube.qw, qx = (float) cube.qx, qy = (float) cube.qy, qz = (float) cube.qz;
+            if (cube.partCount() > 1) {
+                // a body of parts has no orientation to say: it sends the turn of the carried limb since the last packet
+                double[] turn = new double[4];
+                if (cube.takeGrabTurn(turn)) {
+                    qw = (float) turn[0];
+                    qx = (float) turn[1];
+                    qy = (float) turn[2];
+                    qz = (float) turn[3];
+                } else {
+                    qw = 1.0F;
+                    qx = qy = qz = 0.0F;
+                }
+            }
+            float sw = qw, sx = qx, sy = qy, sz = qz;
             this.connection.send(Protocol.C_CUBE_HOLD, out -> {
                 out.writeInt(id);
                 out.writeDouble(x);
                 out.writeDouble(y);
                 out.writeDouble(z);
-                out.writeFloat(qw);
-                out.writeFloat(qx);
-                out.writeFloat(qy);
-                out.writeFloat(qz);
+                out.writeFloat(sw);
+                out.writeFloat(sx);
+                out.writeFloat(sy);
+                out.writeFloat(sz);
             });
         }
     }
 
     /** the cube was let go of or thrown: its speed and spin are what it left the hands with */
-    public void sendCubeRelease(PhysCube cube) {
+    public void sendCubeRelease(PhysEntity cube, boolean thrown, double velX, double velY, double velZ,
+                                double spinX, double spinY, double spinZ) {
         if (this.connection != null && this.state == State.PLAYING) {
             int id = cube.id;
-            float vx = (float) cube.vx, vy = (float) cube.vy, vz = (float) cube.vz;
-            float avx = (float) cube.avx, avy = (float) cube.avy, avz = (float) cube.avz;
+            float vx = (float) velX, vy = (float) velY, vz = (float) velZ;
+            float avx = (float) spinX, avy = (float) spinY, avz = (float) spinZ;
             this.connection.send(Protocol.C_CUBE_RELEASE, out -> {
                 out.writeInt(id);
                 out.writeFloat(vx);
@@ -353,6 +373,16 @@ public final class GameClient implements Connection.Listener, LevelEditListener 
                 out.writeFloat(avx);
                 out.writeFloat(avy);
                 out.writeFloat(avz);
+                out.writeByte(thrown ? 1 : 0);
+            });
+        }
+    }
+
+    public void sendCubeFreeze(int id, int mode) {
+        if (this.connection != null && this.state == State.PLAYING) {
+            this.connection.send(Protocol.C_CUBE_FREEZE, out -> {
+                out.writeInt(id);
+                out.writeByte(mode);
             });
         }
     }
@@ -386,14 +416,17 @@ public final class GameClient implements Connection.Listener, LevelEditListener 
                 fresh = true;
             }
             cube.applyPieceCode(st.piece);
-            if (cube instanceof PhysCube) {
-                PhysCube body = (PhysCube) cube;
+            if (cube instanceof PhysEntity) {
+                PhysEntity body = (PhysEntity) cube;
                 body.remoteHeld = st.holder != -1 && st.holder != me;
                 if (body.held) {
                     continue;
                 }
             }
             cube.setNetState(st.x, st.y, st.z, st.qw, st.qx, st.qy, st.qz, st.vx, st.vy, st.vz, fresh);
+            if (st.extra != null) {
+                cube.applyExtra(st.extra, fresh);   // after the state: a pose is around the middle the server sent
+            }
         }
         if (full) {
             cubes.retainOnly(ids);

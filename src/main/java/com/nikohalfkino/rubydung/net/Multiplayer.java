@@ -155,28 +155,37 @@ public final class Multiplayer {
     // weighted cubes: alone and on a LAN host the game changes them itself (a host's server tells the others), on a server they are asked of it
 
     /** asks the server to put a cube into the cell (only when joined, a host's own game does it itself) */
-    public static void cubeSpawn(int x, int y, int z, boolean dice) {
+    public static void cubeSpawn(int x, int y, int z, int kind) {
         if (client != null) {
-            client.sendCubeSpawn(x, y, z, dice);
+            client.sendCubeSpawn(x, y, z, kind);
         }
     }
 
-    public static void cubePickup(com.nikohalfkino.rubydung.entity.cube.PhysCube cube) {
+    public static void cubePickup(com.nikohalfkino.rubydung.entity.phys.PhysEntity cube, int part, double frac) {
         if (client != null) {
-            client.sendCubePickup(cube.id);
+            client.sendCubePickup(cube.id, part, frac);
         }
     }
 
     /** says where the carried cube should be, called every few ticks while carrying */
-    public static void cubeHold(com.nikohalfkino.rubydung.entity.cube.PhysCube cube) {
+    public static void cubeHold(com.nikohalfkino.rubydung.entity.phys.PhysEntity cube) {
         if (client != null) {
             client.sendCubeHold(cube);
         }
     }
 
-    public static void cubeRelease(com.nikohalfkino.rubydung.entity.cube.PhysCube cube) {
+    /** let go of (thrown = false, the speed it has is sent) or thrown (the speed and the spin it was thrown with, before the body made anything of them) */
+    public static void cubeRelease(com.nikohalfkino.rubydung.entity.phys.PhysEntity cube, boolean thrown,
+                                   double vx, double vy, double vz, double avx, double avy, double avz) {
         if (client != null) {
-            client.sendCubeRelease(cube);
+            client.sendCubeRelease(cube, thrown, vx, vy, vz, avx, avy, avz);
+        }
+    }
+
+    /** tells the server a carried part was frozen where it is and let go of (mode 0), or that the frozen parts of the body were freed (mode 1) */
+    public static void cubeFreeze(com.nikohalfkino.rubydung.entity.phys.PhysEntity cube, int mode) {
+        if (client != null) {
+            client.sendCubeFreeze(cube.id, mode);
         }
     }
 

@@ -1,6 +1,7 @@
 package com.nikohalfkino.rubydung.interfaces.screen;
 
 import com.nikohalfkino.rubydung.RubyDung;
+import com.nikohalfkino.rubydung.interfaces.Gui2D;
 import com.nikohalfkino.rubydung.interfaces.UiStyle;
 import com.nikohalfkino.rubydung.interfaces.widget.Anchor;
 import com.nikohalfkino.rubydung.interfaces.widget.Button;
@@ -25,8 +26,19 @@ public class TitleScreen extends MenuScreen {
     // panel to the "Logged in as" line under it
     private static final float LOGIN_GAP = 12.0f;
 
+    private static final float FADE_IN_SECONDS = 0.8f;
+
+    // 0 = no fade, otherwise when the fade in started
+    private final long fadeStartNanos;
+
     public TitleScreen(RubyDung game) {
+        this(game, false);
+    }
+
+    /** fadeIn = comes up out of black (after the start up screens) */
+    public TitleScreen(RubyDung game, boolean fadeIn) {
         super(game);
+        this.fadeStartNanos = fadeIn ? System.nanoTime() : 0L;
 
         // Logo: centred, a quarter of the way down the window.
         Image logo = add(new Image(LOGO_TEXTURE, LOGO_WIDTH, LOGO_HEIGHT), Anchor.TOP_CENTER, 0, 0);
@@ -50,5 +62,16 @@ public class TitleScreen extends MenuScreen {
         menu.add(new Button("Quit").onClick(game::quit));
 
         block.add(new Label(() -> "Logged in as: " + GameSettings.getUsername()).setColor(UiStyle.TEXT_DIM));
+    }
+
+    @Override
+    protected void renderForeground(int mouseX, int mouseY) {
+        if (this.fadeStartNanos == 0L) {
+            return;
+        }
+        float t = (System.nanoTime() - this.fadeStartNanos) / 1_000_000_000.0f / FADE_IN_SECONDS;
+        if (t < 1.0f) {
+            Gui2D.fillRect(0, 0, this.width, this.height, 0.0f, 0.0f, 0.0f, 1.0f - t);
+        }
     }
 }

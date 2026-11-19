@@ -40,7 +40,9 @@ public final class PlayerRenderer {
     private static final String VERT =
             "#version 120\n" +
                     "varying vec4 vColor;\n" +
+                    Fog.GLSL_VERTEX_DECLARATIONS +
                     "void main() {\n" +
+                    "    vFogWorldXZ = gl_Vertex.xz;\n" +
                     "    gl_Position = ftransform();\n" +
                     "    gl_TexCoord[0] = gl_MultiTexCoord0;\n" +
                     "    vColor = gl_Color;\n" +
@@ -53,7 +55,10 @@ public final class PlayerRenderer {
                     "uniform vec2 sheetSize;\n" +
                     "uniform float mode;\n" +
                     "varying vec4 vColor;\n" +
+                    Fog.GLSL_FRAGMENT_DECLARATIONS +
+                    Fog.GLSL_DITHER_DECLARATIONS +
                     "void main() {\n" +
+                    "    applyDither();\n" +
                     "    vec2 st = gl_TexCoord[0].st;\n" +
                     "    vec4 c = texture2D(tex, st);\n" +
                     "    if (c.a < 0.5) discard;\n" +
@@ -63,13 +68,16 @@ public final class PlayerRenderer {
                     "    if (mode > 1.5) {\n" +
                     "        gl_FragColor = vec4(0.0, 0.0, 0.0, 0.7);\n" +
                     "    } else {\n" +
-                    "        gl_FragColor = vec4(c.rgb * vColor.rgb, c.a);\n" +
+                    "        gl_FragColor = vec4(applyFog(c.rgb * vColor.rgb), c.a);\n" +
                     "    }\n" +
                     "}\n";
 
     private int spriteProgram = 0;
     private int sheetSizeLocation = -1;
     private int modeLocation = -1;
+    private int fogParamsLocation = -1;
+    private int fogColorLocation = -1;
+    private int fogEyeLocation = -1;
 
     public void render(Level level, Player player, PlayerCamera camera, float partialTicks) {
         if (!camera.isPlayerVisible()) {
@@ -108,6 +116,9 @@ public final class PlayerRenderer {
         if (!ensureTexture()) {
             return;
         }
+        if (Fog.beyond(x, z, 1.0D)) {
+            return;   // past the fog: the terrain around it is gone too
+        }
 
         int frame = frameFor(bodyYaw, viewX - x, viewZ - z);
 
@@ -129,6 +140,7 @@ public final class PlayerRenderer {
         glPushAttrib(GL_ENABLE_BIT | GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_TEXTURE_BIT | GL_CURRENT_BIT);
         GL20.glUseProgram(this.spriteProgram);
         GL20.glUniform2f(this.sheetSizeLocation, this.sheetWidth, this.sheetHeight);
+        Fog.upload(this.fogParamsLocation, this.fogColorLocation, this.fogEyeLocation);
 
         glEnable(GL_TEXTURE_2D);
         glBindTexture(GL_TEXTURE_2D, this.texture);
@@ -189,6 +201,9 @@ public final class PlayerRenderer {
             GL20.glUseProgram(0);
             this.sheetSizeLocation = GL20.glGetUniformLocation(p, "sheetSize");
             this.modeLocation = GL20.glGetUniformLocation(p, "mode");
+            this.fogParamsLocation = GL20.glGetUniformLocation(p, "uFogParams");
+            this.fogColorLocation = GL20.glGetUniformLocation(p, "uFogColor");
+            this.fogEyeLocation = GL20.glGetUniformLocation(p, "uFogEye");
             this.spriteProgram = p;
             return true;
         } catch (RuntimeException e) {

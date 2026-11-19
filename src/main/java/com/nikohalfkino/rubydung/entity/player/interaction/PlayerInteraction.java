@@ -8,7 +8,8 @@ import com.nikohalfkino.rubydung.audio.BodySounds;
 import com.nikohalfkino.rubydung.audio.SoundEffects;
 import com.nikohalfkino.rubydung.entity.WorldEntity;
 import com.nikohalfkino.rubydung.entity.cube.Dice;
-import com.nikohalfkino.rubydung.entity.cube.PhysCube;
+import com.nikohalfkino.rubydung.entity.phys.GrabPick;
+import com.nikohalfkino.rubydung.entity.phys.PhysEntity;
 import com.nikohalfkino.rubydung.entity.piece.ChessPiece;
 import com.nikohalfkino.rubydung.interfaces.hud.HandHud;
 import com.nikohalfkino.rubydung.level.Level;
@@ -114,8 +115,9 @@ public class PlayerInteraction {
         }
 
         double[] distance = new double[1];
-        PhysCube cube = this.ctx.level.getCubeManager()
-                .raycast(eyeX, eyeY, eyeZ, dirX, dirY, dirZ, reach, distance);
+        GrabPick pick = new GrabPick();   // which limb of a ragdoll it is on
+        PhysEntity cube = this.ctx.level.getCubeManager()
+                .raycast(eyeX, eyeY, eyeZ, dirX, dirY, dirZ, reach, distance, pick);
 
         HitResult hit = this.hitTracker.current();
         if (cube != null && hit != null) {
@@ -131,13 +133,24 @@ public class PlayerInteraction {
                 cube = null;
             }
         }
-        this.cubeHold.setTargeted(cube);
+        this.cubeHold.setTargeted(cube, cube == null ? null : pick);
     }
 
     /** nothing is aimed at (freecam, no hit): drops the cube target */
     public void clearCubeTarget() {
         this.cubeHold.setTargeted(null);
         this.ctx.level.getCubeManager().setTargetedPiece(null);
+    }
+
+    /**
+     * the place-ragdoll key: puts a ragdoll into the free cell next to the face under the crosshair, facing the player. not while carrying something. true if one was put down
+     */
+    public boolean placeRagdoll() {
+        if (this.cubeHold.isHolding()) {
+            return false;
+        }
+        HitResult hit = this.hitTracker.current();
+        return hit != null && this.placer.placeRagdoll(hit);
     }
 
     /**
@@ -152,6 +165,25 @@ public class PlayerInteraction {
 
         if (this.cubeHold.getTargeted() != null && this.cubeHold.pickUp()) {
             resetHold();
+            HandHud.swingCurrent(HandHud.Action.INTERACT);
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * the secondary interaction key (Q, KeyBinding.KNOCK) tried first: while carrying a ragdoll's limb it is frozen where it is in the air and let go of, with the crosshair on a ragdoll that has frozen limbs it frees them all. true if it did something
+     */
+    public boolean freezeCube() {
+        if (this.cubeHold.isHolding()) {
+            if (this.cubeHold.freeze()) {
+                suppressHeldButtonsUntilReleased();
+                HandHud.swingCurrent(HandHud.Action.INTERACT);
+                return true;
+            }
+            return false;   // a body that can not be frozen: the key does what it always did
+        }
+        if (this.cubeHold.unfreezeTargeted()) {
             HandHud.swingCurrent(HandHud.Action.INTERACT);
             return true;
         }
@@ -337,17 +369,36 @@ public class PlayerInteraction {
     }
 
     public void setSelectedTile(Tile tile) {
+        selectTile(tile);
+    }
+
+    // every way of choosing a tile ends here, so choosing one also puts the ragdoll away
+    private void selectTile(Tile tile) {
         this.ctx.selectedTile = tile;
+        this.ctx.ragdollSelected = false;
+    }
+
+    /** the inventory's ragdoll is what the place button puts down (until a tile is chosen again) */
+    public boolean isRagdollSelected() {
+        return this.ctx.ragdollSelected;
+    }
+
+    public void setRagdollSelected(boolean selected) {
+        this.ctx.ragdollSelected = selected;
     }
 
     public void cycleSelectedTile(int direction) {
-        List<Tile> tiles = Tile.getCycleOrder();
+        // the wheel stays in the group of the selected tile: the gadgets (cube, dice, chess pieces) or the rest
+        List<Tile> tiles = Tile.getCycleGroup(this.ctx.selectedTile);
         int size = tiles.size();
         int index = tiles.indexOf(this.ctx.selectedTile);
+        if (index < 0) {
+            return;
+        }
 
         index = (index + direction + size) % size;
 
-        this.ctx.selectedTile = tiles.get(index);
+        selectTile(tiles.get(index));
     }
 
     public void pickTargetedTile() {
@@ -356,7 +407,7 @@ public class PlayerInteraction {
         if (entity != null) {
             Tile tile = tileOf(entity);
             if (tile != null) {
-                this.ctx.selectedTile = tile;
+                selectTile(tile);
             }
             return;
         }
@@ -370,11 +421,11 @@ public class PlayerInteraction {
         if (tile != null && tile.id > 0) {
             // An open door can't be placed, so picking one selects its closed form.
             if (tile instanceof DimensionalDoorTile) {
-                this.ctx.selectedTile = ((DimensionalDoorTile) tile).getClosedForm();
+                selectTile(((DimensionalDoorTile) tile).getClosedForm());
             } else if (tile instanceof WoodenDoorTile) {
-                this.ctx.selectedTile = ((WoodenDoorTile) tile).getClosedForm();
+                selectTile(((WoodenDoorTile) tile).getClosedForm());
             } else {
-                this.ctx.selectedTile = tile;
+                selectTile(tile);
             }
         }
     }
@@ -418,7 +469,7 @@ public class PlayerInteraction {
         if (this.cubeHold.isHolding()) {
             return null;
         }
-        PhysCube cube = this.cubeHold.getTargeted();
+        PhysEntity cube = this.cubeHold.getTargeted();
         return cube != null ? cube : this.ctx.level.getCubeManager().getTargetedPiece();
     }
 
@@ -427,7 +478,7 @@ public class PlayerInteraction {
         if (entity instanceof ChessPiece) {
             return ChessPieceTile.of((ChessPiece) entity);
         }
-        return entity instanceof Dice ? TileRegistry.DICE : TileRegistry.WEIGHTED_CUBE;
+        return entity instanceof Dice ? TileRegistry.diceTile(((Dice) entity).color()) : TileRegistry.WEIGHTED_CUBE;
     }
 
     /**
@@ -547,6 +598,10 @@ public class PlayerInteraction {
         boolean breaking = breakHeld && !this.breakSuppressedUntilRelease;
         boolean placing = placeHeld && !this.placeSuppressedUntilRelease;
 
+        if (!placing) {
+            this.ctx.ragdollPlaced = false;   // the next press may put down another ragdoll
+        }
+
         if (!breaking && !placing) {
             // A tap that ended inside the chord grace period never got to act: do it now, on release.
             boolean tap = this.tapPending && !this.ctx.acted;
@@ -571,6 +626,18 @@ public class PlayerInteraction {
             return;
         }
         this.tapPending = false;
+
+        // a ragdoll chosen in the inventory: the place button puts one down (once per press) instead of building with the selected tile
+        if (this.ctx.ragdollSelected && placing && !breaking) {
+            if (!this.ctx.ragdollPlaced) {
+                HitResult hit = this.hitTracker.current();
+                if (hit != null && this.placer.placeRagdoll(hit)) {
+                    this.ctx.ragdollPlaced = true;
+                    this.ctx.acted = true;
+                }
+            }
+            return;
+        }
 
         if (placing && !breaking) {
             this.placer.tick(hits, speed);

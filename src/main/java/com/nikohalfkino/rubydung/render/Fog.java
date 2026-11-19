@@ -25,7 +25,19 @@ public final class Fog {
     private Fog() {
     }
 
+    /** the distance fog is measured from when there is no render distance limit and the world still has to fade out (falling into the void) */
+    private static final float UNLIMITED_FADE_BASE = 256.0F;
+
     public static void update(float renderDistanceBlocks, float[] color, double x, double z) {
+        update(renderDistanceBlocks, color, x, z, 1.0F);
+    }
+
+    /** visibility: 1 = the render distance as it is, towards 0 the fog closes in on the eye (the world fades out, see WorldBorder.voidVisibility) */
+    public static void update(float renderDistanceBlocks, float[] color, double x, double z, float visibility) {
+        if (visibility < 1.0F) {
+            float base = renderDistanceBlocks > 0.0F ? renderDistanceBlocks : UNLIMITED_FADE_BASE;
+            renderDistanceBlocks = base * Math.max(visibility, 0.03F);
+        }
         enabled = renderDistanceBlocks > 0.0F;
         end = enabled ? renderDistanceBlocks : FAR_END;
         start = enabled ? renderDistanceBlocks * START_FRACTION : FAR_START;
@@ -34,6 +46,20 @@ public final class Fog {
         COLOR[2] = color[2];
         eyeX = x;
         eyeZ = z;
+    }
+
+    /**
+     * whether something at (x, z) with the given radius is entirely past the fog's end, as seen from the eye: the terrain and the sprites fade out
+     * there (the dither band), so a body out there is not drawn at all
+     */
+    public static boolean beyond(double x, double z, double radius) {
+        if (!enabled) {
+            return false;
+        }
+        double dx = x - eyeX;
+        double dz = z - eyeZ;
+        double reach = end + radius;
+        return dx * dx + dz * dz > reach * reach;
     }
 
     public static boolean isEnabled() {

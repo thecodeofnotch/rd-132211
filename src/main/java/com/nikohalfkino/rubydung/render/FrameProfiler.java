@@ -20,12 +20,15 @@ import static org.lwjgl.opengl.GL11.glFinish;
  * average per frame is printed to the console. while it is on, every lap calls glFinish(), so GPU work is counted in the stage that
  * issued it instead of piling up in whichever call finally waits (the buffer swap). that makes frames a bit slower than normal,
  * compare the stages with each other rather than the total with your usual fps
+ *
+ * for the other view, add -Dstrata.profile.cpu=true (or the environment variable STRATA_PROFILE_CPU=1): the laps then do NOT call glFinish(), so each stage shows only the time the CPU spent issuing it and the GPU's time piles up in "swap". compare it with the synced report: a stage that is big in both is CPU-bound, one that is big only when synced is waiting for the GPU
  */
 public final class FrameProfiler {
 
     private static final String FLAG_FILE = "strata-profile.txt";
     private static final File LOG = new File("strata-profile.log");
     private static final boolean ENABLED;
+    private static final boolean CPU_ONLY = Boolean.getBoolean("strata.profile.cpu") || System.getenv("STRATA_PROFILE_CPU") != null;
 
     static {
         String how = null;
@@ -61,7 +64,9 @@ public final class FrameProfiler {
         if (!ENABLED) {
             return;
         }
-        glFinish();
+        if (!CPU_ONLY) {
+            glFinish();
+        }
         long now = System.nanoTime();
         TOTALS.computeIfAbsent(stage, k -> new long[1])[0] += now - mark;
         mark = System.nanoTime();
@@ -84,7 +89,7 @@ public final class FrameProfiler {
             out.append(String.format("  %s=%.2f", entry.getKey(), ms));
             entry.getValue()[0] = 0L;
         }
-        out.append(String.format("  | total=%.2f", sum));
+        out.append(String.format("  | total=%.2f", sum)).append(CPU_ONLY ? " (cpu only, no glFinish)" : " (synced)");
         System.out.println(out);
         try (FileWriter log = new FileWriter(LOG, true)) {
             log.write(out + System.lineSeparator());

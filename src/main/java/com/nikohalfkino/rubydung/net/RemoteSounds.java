@@ -109,6 +109,13 @@ final class RemoteSounds {
             case Protocol.SOUND_CUBE_HIT:
                 SoundEffects.play("cube_impact_player", strength * volume);
                 break;
+            case Protocol.SOUND_RAGDOLL_HIT:
+            case Protocol.SOUND_RAGDOLL_BUMP:
+                BodySounds.ragdollImpact(strength * volume);
+                break;
+            case Protocol.SOUND_RAGDOLL_SPLASH:
+                BodySounds.ragdollSplash(strength * volume);
+                break;
             default:
                 BodySounds.play(event - Protocol.SOUND_BODY, strength, volume);
                 break;

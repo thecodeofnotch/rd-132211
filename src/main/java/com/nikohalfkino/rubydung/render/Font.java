@@ -1,5 +1,7 @@
 package com.nikohalfkino.rubydung.render;
 
+import com.nikohalfkino.rubydung.interfaces.Gui2D;
+
 import java.awt.image.BufferedImage;
 
 import static org.lwjgl.opengl.GL11.*;
@@ -108,43 +110,46 @@ public class Font {
     }
 
     public void drawStringScaled(String text, int x, int y, int color, float scale, float alpha) {
+        if (text == null || text.isEmpty()) {
+            return;
+        }
+
+        // inside a Gui2D pass blending is known to be on, so the driver is not asked (a glIsEnabled per string was a stall per string).
+        // outside one it is still asked, once per string, and put back as it was
+        boolean blendWasOn = Gui2D.isActive() || glIsEnabled(GL_BLEND);
+
         glPushMatrix();
         glTranslatef((float) x, (float) y, 0.0F);
         glScalef(scale, scale, 1.0F);
 
-        int shadowColor = shade(color);
-        drawRaw(text, 1, 1, shadowColor, alpha);
-        drawRaw(text, 0, 0, color, alpha);
-
-        glPopMatrix();
-    }
-
-    private void drawRaw(String text, float x, float y, int color, float alpha) {
-        float red = ((color >> 16) & 0xFF) / 255.0F;
-        float green = ((color >> 8) & 0xFF) / 255.0F;
-        float blue = (color & 0xFF) / 255.0F;
-
-        boolean blendWasOn = glIsEnabled(GL_BLEND);
-
         glEnable(GL_TEXTURE_2D);
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-
         Textures.bind(this.monospace ? this.monospaceTextureId : this.defaultTextureId);
-        glColor4f(red, green, blue, alpha);
 
-        float cursorX = x;
+        // the shadow and the text in one batch: the colour changes between the two runs of glyphs
         glBegin(GL_QUADS);
-        for (int i = 0; i < text.length(); i++) {
-            char character = text.charAt(i);
-            drawGlyph(character, cursorX, y);
-            cursorX += widthOf(character);
-        }
+        emit(text, 1.0F, 1.0F, shade(color), alpha);
+        emit(text, 0.0F, 0.0F, color, alpha);
         glEnd();
 
         glColor4f(1.0F, 1.0F, 1.0F, 1.0F);
         if (!blendWasOn) {
             glDisable(GL_BLEND);
+        }
+
+        glPopMatrix();
+    }
+
+    // inside glBegin(GL_QUADS): the quads of a string in one colour
+    private void emit(String text, float x, float y, int color, float alpha) {
+        glColor4f(((color >> 16) & 0xFF) / 255.0F, ((color >> 8) & 0xFF) / 255.0F, (color & 0xFF) / 255.0F, alpha);
+
+        float cursorX = x;
+        for (int i = 0; i < text.length(); i++) {
+            char character = text.charAt(i);
+            drawGlyph(character, cursorX, y);
+            cursorX += widthOf(character);
         }
     }
 

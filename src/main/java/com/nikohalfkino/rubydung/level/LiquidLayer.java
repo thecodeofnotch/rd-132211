@@ -556,6 +556,13 @@ public final class LiquidLayer {
         this.snapshotActive = false;
     }
 
+    /** drops the copy buffers (they are made again by the next beginSnapshot) */
+    void releaseSnapshot() {
+        this.snapshotActive = false;
+        this.cellsSnapshot = null;
+        this.fillsSnapshot = null;
+    }
+
     /** call right after the last slice: takes the small parts (holes, floor, limit) and returns the write for the save thread */
     Runnable finishSnapshot(File file) {
         this.snapshotActive = false;

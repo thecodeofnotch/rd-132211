@@ -13,6 +13,7 @@ import com.nikohalfkino.rubydung.interfaces.widget.Slider;
 import com.nikohalfkino.rubydung.interfaces.widget.TextInput;
 import com.nikohalfkino.rubydung.level.WorldManager;
 import com.nikohalfkino.rubydung.level.generation.LevelGenerator;
+import com.nikohalfkino.rubydung.util.WorldNames;
 
 /**
  * new-world form laid out like Options: a panel with a dim header per section (World, Terrain, Size, Time), Create / Cancel at the bottom
@@ -36,6 +37,10 @@ public class CreateWorldScreen extends MenuScreen {
     private static final float ITEM_GAP    = 8.0f;
     private static final float HEADER_GAP  = 6.0f;
     private static final float SECTION_GAP = 16.0f;
+
+    // Random button to the right of the name box
+    private static final float RANDOM_WIDTH = 100.0f;
+    private static final float RANDOM_GAP   = 8.0f;
 
     private static final float TYPE_GAP   = 12.0f;
     private static final float CHOICE_GAP = 12.0f;
@@ -65,6 +70,9 @@ public class CreateWorldScreen extends MenuScreen {
     private float frozenStartTime = TIME_NOON;
     private String error = null;
 
+    // greyed in the name box while it is empty, used as the name if it stays empty
+    private String suggestedName;
+
     public CreateWorldScreen(RubyDung game) {
         super(game);
 
@@ -85,8 +93,13 @@ public class CreateWorldScreen extends MenuScreen {
         // world
         panel.add(new Label("World").setColor(UiStyle.TEXT_DIM), HEADER_GAP);
 
-        this.nameInput = panel.add(
-                new TextInput("Name: ", PANEL_WIDTH, FIELD_HEIGHT, MAX_NAME_LENGTH), SECTION_GAP);
+        this.suggestedName = randomName();
+
+        Row nameRow = panel.add(new Row(RANDOM_GAP), SECTION_GAP);
+        this.nameInput = nameRow.add(
+                new TextInput("Name: ", PANEL_WIDTH - RANDOM_WIDTH - RANDOM_GAP, FIELD_HEIGHT, MAX_NAME_LENGTH)
+                        .setPlaceholder(() -> this.suggestedName));
+        nameRow.add(new Button("Random", RANDOM_WIDTH, BUTTON_HEIGHT, true).onClick(this::rollName));
 
         // terrain
         panel.add(new Label("Terrain").setColor(UiStyle.TEXT_DIM), HEADER_GAP);
@@ -161,7 +174,29 @@ public class CreateWorldScreen extends MenuScreen {
         errorLabel.setSize(PANEL_WIDTH, -1.0f);
         errorLabel.setVisibleWhen(() -> this.error != null);
 
-        setFocus(this.nameInput);
+        // no focus at the start: a focused empty box would hide the suggested name. typing or a click focuses it
+    }
+
+    // a name no world has yet, picked from world_names.toml
+    private static String randomName() {
+        return WorldNames.random(MAX_NAME_LENGTH, name -> !WorldManager.exists(WorldManager.sanitize(name)));
+    }
+
+    // the Random button: a new suggestion, whatever was typed is cleared so the suggestion shows
+    private void rollName() {
+        this.suggestedName = randomName();
+        this.nameInput.setText("");
+        setFocus(null);
+        this.error = null;
+    }
+
+    // typing with nothing focused starts typing in the name box
+    @Override
+    public boolean keyPressed(int key, char character) {
+        if (getFocus() == null && character >= 32 && character != 127) {
+            setFocus(this.nameInput);
+        }
+        return super.keyPressed(key, character);
     }
 
     private static String sizeText(LevelGenerator.WorldSize size) {
@@ -240,7 +275,9 @@ public class CreateWorldScreen extends MenuScreen {
     }
 
     private void tryCreate() {
-        String name = WorldManager.sanitize(this.nameInput.getText());
+        // an empty box means "take the suggestion"
+        String typed = this.nameInput.getText();
+        String name = WorldManager.sanitize(typed.trim().isEmpty() ? this.suggestedName : typed);
 
         if (name.isEmpty()) {
             this.error = "Enter a world name";

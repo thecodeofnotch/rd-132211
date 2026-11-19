@@ -1,5 +1,6 @@
 package com.nikohalfkino.rubydung.entity.player.interaction;
 
+import com.nikohalfkino.rubydung.entity.CubeManager;
 import com.nikohalfkino.rubydung.entity.player.Player;
 import com.nikohalfkino.rubydung.audio.SoundEffects;
 import com.nikohalfkino.rubydung.interfaces.hud.HandHud;
@@ -9,6 +10,7 @@ import com.nikohalfkino.rubydung.level.tiles.special.LiquidTile;
 import com.nikohalfkino.rubydung.level.tiles.common.RotatableTile;
 import com.nikohalfkino.rubydung.level.tiles.special.ChessPieceTile;
 import com.nikohalfkino.rubydung.level.tiles.special.CubeTile;
+import com.nikohalfkino.rubydung.level.tiles.special.ColoredDiceTile;
 import com.nikohalfkino.rubydung.level.tiles.special.DiceTile;
 import com.nikohalfkino.rubydung.level.tiles.Tile;
 import com.nikohalfkino.rubydung.entity.phys.AABB;
@@ -72,6 +74,13 @@ final class BlockPlacer extends BlockAction {
         this.holding = false;
         this.buildBudget = 1.0;
         clearBuildLine();
+        if (this.ctx.ragdollSelected) {
+            // a ragdoll, not the selected tile. one per press: PlayerInteraction.tick does not place another while the button is held
+            if (placeRagdoll(hit)) {
+                this.ctx.ragdollPlaced = true;
+            }
+            return;
+        }
         placeAgainst(hit);
     }
 
@@ -204,12 +213,15 @@ final class BlockPlacer extends BlockAction {
 
         // A weighted cube is a body, not a block: it is dropped into the cell, aligned to the grid.
         if (selected instanceof CubeTile) {
-            return placeCube(hit, x, y, z, false);
+            return placeCube(hit, x, y, z, CubeManager.KIND_CUBE);
         }
 
-        // A dice is the same, a cube that shows a number after it has been thrown.
+        // A dice is the same, a cube that shows a number after it has been thrown. the red and blue ones are see-through.
         if (selected instanceof DiceTile) {
-            return placeCube(hit, x, y, z, true);
+            return placeCube(hit, x, y, z, CubeManager.KIND_DICE);
+        }
+        if (selected instanceof ColoredDiceTile) {
+            return placeCube(hit, x, y, z, CubeManager.kindOfDice(((ColoredDiceTile) selected).getColor()));
         }
 
         // A chess piece is an entity too: it stands on the square, aligned to the grid.
@@ -291,17 +303,39 @@ final class BlockPlacer extends BlockAction {
     }
 
     // puts a weighted cube (or a dice) into the free cell (x, y, z). joined to a server it is asked of the server, which puts it there for everybody (it shows up when the server says so)
-    private boolean placeCube(HitResult hit, int x, int y, int z, boolean dice) {
-        if (Multiplayer.isClient()) {
-            if (!this.ctx.level.getCubeManager().canSpawnIn(x, y, z, this.ctx.player)) {
-                return false;
-            }
-            Multiplayer.cubeSpawn(x, y, z, dice);
-        } else if (this.ctx.level.getCubeManager().spawnIn(x, y, z, this.ctx.player, dice) == null) {
+    private boolean placeCube(HitResult hit, int x, int y, int z, int kind) {
+        if (!spawnBody(x, y, z, kind)) {
             return false;
         }
         notePlaced(hit, x, y, z);
         return true;
+    }
+
+    // the place-ragdoll key: a ragdoll into the free cell next to the face under the crosshair, turned to face the player. it is not a tile, so it takes nothing from the build budget and starts no drag-build
+    boolean placeRagdoll(HitResult hit) {
+        int[] normal = FACE_NORMALS[hit.face];
+        int x = hit.cellX + normal[0];
+        int y = hit.cellY + normal[1];
+        int z = hit.cellZ + normal[2];
+        if (!this.ctx.inWorld(x, y, z) || !spawnBody(x, y, z, CubeManager.KIND_RAGDOLL)) {
+            return false;
+        }
+        HandHud.swingCurrent(HandHud.Action.PLACE);
+        SoundEffects.play("phys_put_down");
+        return true;
+    }
+
+    // asks for the body (CubeManager.KIND_*) to be put into the cell: alone it is done here, joined to a server the server is asked
+    private boolean spawnBody(int x, int y, int z, int kind) {
+        CubeManager cubes = this.ctx.level.getCubeManager();
+        if (Multiplayer.isClient()) {
+            if (!cubes.canSpawnIn(x, y, z, this.ctx.player, kind)) {
+                return false;
+            }
+            Multiplayer.cubeSpawn(x, y, z, kind);
+            return true;
+        }
+        return cubes.spawnIn(x, y, z, this.ctx.player, kind, this.ctx.player.x, this.ctx.player.z) != null;
     }
 
     // stands the selected chess piece on the free cell (x, y, z). setting the tile is what puts it there (Level.setTile), joined to a server it asks the server, which stands it there for everybody

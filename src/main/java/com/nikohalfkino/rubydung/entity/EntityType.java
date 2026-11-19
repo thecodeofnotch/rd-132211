@@ -17,7 +17,9 @@ public final class EntityType {
         /** a textured box turned by the entity's orientation (CubeRenderer.render) */
         BOX,
         /** a sprite that faces the camera (CubeRenderer.renderPieces) */
-        BILLBOARD
+        BILLBOARD,
+        /** a 3D model, bent to the pose of the entity's body (RagdollRenderer) */
+        MODEL
     }
 
     /** the key for saves, the network and scripts. never changes once worlds exist */
@@ -31,6 +33,7 @@ public final class EntityType {
     private boolean solidForPlayer;
     private boolean selectable;
     private boolean physics;
+    private boolean dynamicHull;
     private boolean networked = true;
     private boolean saved = true;
 
@@ -107,6 +110,15 @@ public final class EntityType {
     }
 
     // ---------------------------------------------------------------- size and look
+
+    /**
+     * the hull is not a fixed box: the entity works it out from its own body (a ragdoll's is the box around its limbs, and changes with the pose), so hull() says nothing about it and nothing may assume it stays the same size
+     */
+    public EntityType dynamicHull() {
+        checkOpen();
+        this.dynamicHull = true;
+        return this;
+    }
 
     /** the box that is picked, and for a piece the box it fills, in blocks */
     public EntityType hull(float width, float height) {
@@ -186,6 +198,10 @@ public final class EntityType {
 
     public boolean isPhysics() {
         return this.physics;
+    }
+
+    public boolean hasDynamicHull() {
+        return this.dynamicHull;
     }
 
     public boolean isNetworked() {

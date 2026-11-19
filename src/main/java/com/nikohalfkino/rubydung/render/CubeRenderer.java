@@ -26,7 +26,7 @@ import static org.lwjgl.opengl.GL11.*;
  */
 public final class CubeRenderer {
 
-    public static final String TEXTURE = "/assets/rubydung/textures/block/test.png";
+    public static final String TEXTURE = "/assets/rubydung/textures/block/weighted_cube.png";
 
     // corners of each face as (x, y, z) in -1..1, in the order top-left, bottom-left, bottom-right, top-right seen from outside (the top and bottom faces seen from above / below with north up)
     private static final float[][] CORNERS = {
@@ -46,9 +46,11 @@ public final class CubeRenderer {
 
     // the dice: face index (as in CORNERS) -> the number on it. opposite faces add up to 7, Dice.upFaceValue uses the same
     private static final int[] DICE_FACE_VALUE = {1, 6, 2, 5, 3, 4};
-    private static final String DICE_TEXTURE = "/assets/rubydung/textures/block/dice/dice%d.png";
-    private final int[] diceTextures = new int[6];
-    private boolean diceTexturesFailed = false;
+    // dice1.png .. dice6.png for the white one, dice1_red.png ... for the others (Dice.Color.textureSuffix). the red and blue ones are semitransparent: they are drawn after everything else, blended, back faces first (see render)
+    private static final String DICE_TEXTURE = "/assets/rubydung/textures/block/dice/dice%d%s.png";
+    private final int[][] diceTextures = new int[Dice.Color.values().length][6];
+    private final boolean[] diceTexturesFailed = new boolean[Dice.Color.values().length];
+    private final java.util.List<PhysCube> seeThrough = new java.util.ArrayList<>();
 
     // the number over a dice that has rolled is a tag like a player's name or a door's destination (see NameTags): projected to the screen while the 3D matrices are active (collectDiceTags), drawn later with the HUD (renderDiceTags)
     private final NameTags diceTags = new NameTags();
@@ -72,7 +74,7 @@ public final class CubeRenderer {
     private final java.util.List<ChessPiece> cutouts = new java.util.ArrayList<>();
     private final java.util.List<ChessPiece> blended = new java.util.ArrayList<>();
 
-    /** draws every cube. partialTicks blends the last two ticks */
+    /** draws every cube but the see-through dice (the red and the blue one), which renderSeeThrough draws later. partialTicks blends the last two ticks */
     public void render(Level level, CubeManager manager, float partialTicks) {
         if (manager.count() == 0) {
             return;
@@ -82,7 +84,7 @@ public final class CubeRenderer {
 
         int program = glGetInteger(GL20.GL_CURRENT_PROGRAM);
         GL20.glUseProgram(0);
-        glPushAttrib(GL_ENABLE_BIT | GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_TEXTURE_BIT | GL_CURRENT_BIT);
+        glPushAttrib(GL_ENABLE_BIT | GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_TEXTURE_BIT | GL_CURRENT_BIT | GL_POLYGON_BIT);
 
         if (textured) {
             glEnable(GL_TEXTURE_2D);
@@ -90,20 +92,61 @@ public final class CubeRenderer {
         } else {
             glDisable(GL_TEXTURE_2D);
         }
-        glDisable(GL_FOG);
+        Fog.applyFixedFunction();   // the cubes melt into the fog like the terrain does
         glDisable(GL_BLEND);
         glDisable(GL_ALPHA_TEST);
         glDisable(GL_CULL_FACE);
         glDepthMask(true);
 
         for (WorldEntity entity : manager.all()) {
-            if (entity instanceof PhysCube) {
-                draw(level, (PhysCube) entity, partialTicks, textured);
+            // the boxes: a ragdoll is no PhysCube, it is a model and RagdollRenderer draws it
+            if (entity instanceof PhysCube && !isSeeThrough((PhysCube) entity)) {
+                draw(level, (PhysCube) entity, partialTicks, textured, false);
             }
         }
 
         glPopAttrib();
         GL20.glUseProgram(program);
+    }
+
+    /**
+     * the see-through dice (the red and the blue one). call after everything opaque has been drawn (the terrain, the cubes, the players, the sprites, the pieces) and before the liquids: they are blended over what is already there, so it has to be there, and they write depth, so what is drawn after them (the water) is hidden by a dice that is in front of it and blends over one that is under it
+     *
+     * far to near as seen from the eye, so they show through each other. one dice is drawn in two passes, the faces turned away from the eye first and then the ones turned toward it, so its far side shows through its near side the right way round. the pixels that are all but transparent are not drawn, so they do not hide anything behind them
+     */
+    public void renderSeeThrough(Level level, CubeManager manager, float partialTicks, double eyeX, double eyeY, double eyeZ) {
+        this.seeThrough.clear();
+        for (WorldEntity entity : manager.all()) {
+            if (entity instanceof PhysCube && isSeeThrough((PhysCube) entity)) {
+                this.seeThrough.add((PhysCube) entity);
+            }
+        }
+        if (this.seeThrough.isEmpty()) {
+            return;
+        }
+        this.seeThrough.sort((a, b) -> Double.compare(distanceSq(b, eyeX, eyeY, eyeZ), distanceSq(a, eyeX, eyeY, eyeZ)));
+
+        int program = glGetInteger(GL20.GL_CURRENT_PROGRAM);
+        GL20.glUseProgram(0);
+        glPushAttrib(GL_ENABLE_BIT | GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_TEXTURE_BIT | GL_CURRENT_BIT | GL_POLYGON_BIT);
+        try {
+            glEnable(GL_TEXTURE_2D);
+            Fog.applyFixedFunction();
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            glEnable(GL_ALPHA_TEST);
+            glAlphaFunc(GL_GREATER, 0.02F);
+            glEnable(GL_DEPTH_TEST);
+            glDepthFunc(GL_LEQUAL);
+            glDepthMask(true);
+            glEnable(GL_CULL_FACE);
+            for (PhysCube cube : this.seeThrough) {
+                draw(level, cube, partialTicks, false, true);
+            }
+        } finally {
+            glPopAttrib();
+            GL20.glUseProgram(program);
+        }
     }
 
     private static int pieceIndex(ChessPiece piece) {
@@ -224,10 +267,25 @@ public final class CubeRenderer {
         this.pieceMesh.draw();
     }
 
-    private void draw(Level level, PhysCube cube, float partialTicks, boolean textured) {
+    // a dice of a colour with semitransparent textures (and the textures are there, if not it is drawn as a plain cube)
+    private boolean isSeeThrough(PhysCube cube) {
+        return cube instanceof Dice && ((Dice) cube).color().translucent && ensureDiceTextures(((Dice) cube).color());
+    }
+
+    private static double distanceSq(PhysCube cube, double x, double y, double z) {
+        double dx = cube.x - x;
+        double dy = cube.y - y;
+        double dz = cube.z - z;
+        return dx * dx + dy * dy + dz * dz;
+    }
+
+    private void draw(Level level, PhysCube cube, float partialTicks, boolean textured, boolean seeThrough) {
         double x = cube.prevX + (cube.x - cube.prevX) * partialTicks;
         double y = cube.prevY + (cube.y - cube.prevY) * partialTicks;
         double z = cube.prevZ + (cube.z - cube.prevZ) * partialTicks;
+        if (Fog.beyond(x, z, 2.0D)) {
+            return;   // past the fog: the terrain around it is gone too
+        }
 
         int cellX = (int) Math.floor(x);
         int cellY = (int) Math.floor(y);
@@ -246,32 +304,38 @@ public final class CubeRenderer {
         float s = (float) PhysCube.HALF;
         glScalef(s, s, s);
 
-        boolean dice = cube instanceof Dice && ensureDiceTextures();
+        int color = cube instanceof Dice ? ((Dice) cube).color().ordinal() : 0;
+        boolean dice = cube instanceof Dice && ensureDiceTextures(((Dice) cube).color());
         boolean uv = dice || textured;
-        if (!dice) {
-            glBegin(GL_QUADS);
-        }
-        for (int face = 0; face < 6; face++) {
-            float shade = shadeOf(face) * brightness;
-            glColor3f(shade, shade, shade);
-            float[] c = CORNERS[face];
-            if (dice) {
-                glEnable(GL_TEXTURE_2D);
-                glBindTexture(GL_TEXTURE_2D, this.diceTextures[DICE_FACE_VALUE[face] - 1]);
+        for (int pass = 0; pass < (seeThrough ? 2 : 1); pass++) {
+            if (seeThrough) {
+                glCullFace(pass == 0 ? GL_FRONT : GL_BACK);   // the faces are counter-clockwise seen from outside
+            }
+            if (!dice) {
                 glBegin(GL_QUADS);
             }
-            for (int v = 0; v < 4; v++) {
-                if (uv) {
-                    glTexCoord2f(UV[v * 2], UV[v * 2 + 1]);
+            for (int face = 0; face < 6; face++) {
+                float shade = shadeOf(face) * brightness;
+                glColor3f(shade, shade, shade);
+                float[] c = CORNERS[face];
+                if (dice) {
+                    glEnable(GL_TEXTURE_2D);
+                    glBindTexture(GL_TEXTURE_2D, this.diceTextures[color][DICE_FACE_VALUE[face] - 1]);
+                    glBegin(GL_QUADS);
                 }
-                glVertex3f(c[v * 3], c[v * 3 + 1], c[v * 3 + 2]);
+                for (int v = 0; v < 4; v++) {
+                    if (uv) {
+                        glTexCoord2f(UV[v * 2], UV[v * 2 + 1]);
+                    }
+                    glVertex3f(c[v * 3], c[v * 3 + 1], c[v * 3 + 2]);
+                }
+                if (dice) {
+                    glEnd();
+                }
             }
-            if (dice) {
+            if (!dice) {
                 glEnd();
             }
-        }
-        if (!dice) {
-            glEnd();
         }
 
         glPopMatrix();
@@ -286,23 +350,24 @@ public final class CubeRenderer {
         }
     }
 
-    // the six face textures are read on first use; if one is missing the dice is drawn with the plain cube texture
-    private boolean ensureDiceTextures() {
-        if (this.diceTextures[0] != 0) {
+    // the six face textures of a colour are read on first use; if one is missing the dice is drawn with the plain cube texture
+    private boolean ensureDiceTextures(Dice.Color color) {
+        int c = color.ordinal();
+        if (this.diceTextures[c][0] != 0) {
             return true;
         }
-        if (this.diceTexturesFailed) {
+        if (this.diceTexturesFailed[c]) {
             return false;
         }
         try {
             for (int i = 0; i < 6; i++) {
-                this.diceTextures[i] = Textures.loadTexture(String.format(DICE_TEXTURE, i + 1), GL_NEAREST);
+                this.diceTextures[c][i] = Textures.loadTexture(String.format(DICE_TEXTURE, i + 1, color.textureSuffix), GL_NEAREST);
             }
             return true;
         } catch (RuntimeException e) {
-            System.err.println("[CubeRenderer] dice texture failed: " + e.getMessage());
-            this.diceTexturesFailed = true;
-            this.diceTextures[0] = 0;
+            System.err.println("[CubeRenderer] dice texture (" + color + ") failed: " + e.getMessage());
+            this.diceTexturesFailed[c] = true;
+            this.diceTextures[c][0] = 0;
             return false;
         }
     }

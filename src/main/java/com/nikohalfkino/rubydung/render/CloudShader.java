@@ -59,6 +59,13 @@ final class CloudShader {
         GL20.glUniform1f(biasLocation, bias);
     }
 
+    /** compiles and links the program now (it is otherwise built on its first use, in the middle of a frame): called from ShaderWarmup while the world loads */
+    public static void warmUp() {
+        if (program == 0) {
+            init();
+        }
+    }
+
     private static void init() {
         int vs = compile(GL20.GL_VERTEX_SHADER, VERT);
         int fs = compile(GL20.GL_FRAGMENT_SHADER, FRAG);

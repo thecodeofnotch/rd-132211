@@ -7,17 +7,12 @@ import org.lwjgl.LWJGLException;
 import org.lwjgl.opengl.Display;
 import org.lwjgl.opengl.DisplayMode;
 
-import javax.swing.JFrame;
-import java.awt.GraphicsEnvironment;
-import java.awt.Insets;
-import java.awt.Rectangle;
-
 import static org.lwjgl.opengl.GL11.*;
 
 /**
  * keeps the game's logical size (what the UI lays out in) apart from the real window size, and works out where the game is drawn inside the window
  *
- * three display states (DisplayType): plain resizable window, maximized (fills the desktop work area), fullscreen. windowed always uses Expand, maximized and fullscreen each have their own layout:
+ * two display states (DisplayType): plain resizable window (the window's own maximize button works as usual) and fullscreen. windowed always uses Expand, fullscreen has its own layout:
  *
  * Expand: logical size is the whole window / screen, the UI fills it
  *
@@ -40,13 +35,11 @@ public final class WindowManager {
     // state last applied to the real window
     private DisplayType applied = DisplayType.WINDOWED;
 
-    // size and position of the plain window, restored when coming back from maximized / fullscreen
+    // size and position of the plain window, restored when coming back from fullscreen
     private int windowedWidth = BASE_WIDTH;
     private int windowedHeight = BASE_HEIGHT;
     private int windowedX, windowedY;
     private boolean hasWindowedPosition = false;
-
-    private Insets decorationInsets;
 
     public int getLogicalWidth() {
         return this.logicalWidth;
@@ -67,12 +60,6 @@ public final class WindowManager {
         DisplayType type = GameSettings.getDisplayType();
         if (type == DisplayType.FULLSCREEN) {
             Display.setDisplayModeAndFullscreen(Display.getDesktopDisplayMode());
-        } else if (type == DisplayType.MAXIMIZED) {
-            Rectangle area = workArea();
-            Insets in = insets();
-            Display.setDisplayMode(new DisplayMode(
-                    Math.max(1, area.width - in.left - in.right), Math.max(1, area.height - in.top - in.bottom)));
-            Display.setLocation(area.x, area.y);
         } else {
             Display.setDisplayMode(new DisplayMode(BASE_WIDTH, BASE_HEIGHT));
         }
@@ -85,7 +72,7 @@ public final class WindowManager {
         boolean fullscreenNow = Display.isFullscreen();
 
         // Leaving the plain window: remember where it was so it can come back there.
-        if (this.applied == DisplayType.WINDOWED && !fullscreenNow && want != DisplayType.WINDOWED) {
+        if (this.applied == DisplayType.WINDOWED && !fullscreenNow && want == DisplayType.FULLSCREEN) {
             this.windowedX = Display.getX();
             this.windowedY = Display.getY();
             this.windowedWidth = Display.getWidth();
@@ -99,27 +86,16 @@ public final class WindowManager {
             if (want == DisplayType.FULLSCREEN) {
                 Display.setDisplayModeAndFullscreen(Display.getDesktopDisplayMode());
             } else {
-                int w;
-                int h;
-                if (want == DisplayType.MAXIMIZED) {
-                    Rectangle area = workArea();
-                    Insets in = insets();
-                    w = Math.max(1, area.width - in.left - in.right);
-                    h = Math.max(1, area.height - in.top - in.bottom);
-                } else {
-                    w = this.windowedWidth;
-                    h = this.windowedHeight;
-                }
-
-                Display.setDisplayMode(new DisplayMode(w, h));
+                Display.setDisplayMode(new DisplayMode(this.windowedWidth, this.windowedHeight));
                 if (fullscreenNow) {
                     Display.setFullscreen(false);
+                    // leaving fullscreen makes LWJGL build a new window, and that one came back without its maximize
+                    // button (greyed out). setResizable ignores a value it already holds, so it has to be turned off and on
+                    Display.setResizable(false);
+                    Display.setResizable(true);
                 }
 
-                if (want == DisplayType.MAXIMIZED) {
-                    Rectangle area = workArea();
-                    Display.setLocation(area.x, area.y);
-                } else if (this.hasWindowedPosition) {
+                if (this.hasWindowedPosition) {
                     Display.setLocation(this.windowedX, this.windowedY);
                 }
             }
@@ -128,28 +104,6 @@ public final class WindowManager {
         }
 
         recompute();
-    }
-
-    // desktop area a maximized window may use (excludes taskbar / dock)
-    private static Rectangle workArea() {
-        return GraphicsEnvironment.getLocalGraphicsEnvironment().getMaximumWindowBounds();
-    }
-
-    // title bar and border sizes of a normal window (LWJGL 2 can't report its own)
-    private Insets insets() {
-        if (this.decorationInsets == null) {
-            Insets in = new Insets(0, 0, 0, 0);
-            try {
-                JFrame probe = new JFrame();
-                probe.addNotify();
-                in = probe.getInsets();
-                probe.dispose();
-            } catch (Throwable ignored) {
-                // headless or no peer: assume none
-            }
-            this.decorationInsets = in;
-        }
-        return this.decorationInsets;
     }
 
     /** works out the logical size and viewport rectangle from the current window and layout */
@@ -166,9 +120,7 @@ public final class WindowManager {
             this.windowedHeight = sh;
         }
 
-        LayoutMode mode = type == DisplayType.FULLSCREEN ? GameSettings.getFullscreenMode()
-                : type == DisplayType.MAXIMIZED ? GameSettings.getMaximizedMode()
-                : LayoutMode.EXPAND;
+        LayoutMode mode = type == DisplayType.FULLSCREEN ? GameSettings.getFullscreenMode() : LayoutMode.EXPAND;
 
         if (mode == LayoutMode.EXPAND) {
             this.logicalWidth = sw;

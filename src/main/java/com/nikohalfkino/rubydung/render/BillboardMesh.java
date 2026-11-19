@@ -15,6 +15,10 @@ import static org.lwjgl.opengl.GL11.*;
  *
  * per vertex: the sprite's pivot (bottom centre) as the position, the atlas coordinate, the light (r = sky light,
  * g = block light, combined with the live ambient in StaticBillboardShader) with the liquid tint packed in alpha, and a corner (texture unit 1: x = -0.5 / +0.5 across, y = 0 / 1 up, z = sprite size)
+ *
+ * a mesh is either thin (the default: only the attributes above) or carries auras (BillboardMesh.withAuras(): also texture units 2 to 6, see below).
+ * the sprites themselves are drawn from thin meshes. the auras are drawn from their own meshes that hold only the sprites that have one
+ * (see Chunk.LAYER_AURA_ALPHA and LAYER_AURA_SCREEN), so a sprite without an aura never pays for the aura's attributes or for the aura passes
  */
 public final class BillboardMesh {
 
@@ -23,14 +27,42 @@ public final class BillboardMesh {
     private float[] uvs = new float[8 * 32];
     private float[] colors = new float[16 * 32];
     // per vertex, texture units 2 and 3: the aura (centre x, centre y, radius, density) and its colour (rgb, falloff). radius 0 = none
-    private float[] auras = new float[16 * 32];
-    private float[] auraColors = new float[16 * 32];
+    // (only allocated when carriesAuras, null in a thin mesh)
+    private float[] auras;
+    private float[] auraColors;
     // per vertex, texture unit 4: the aura's band count, the antialiased edge width in pixels, its blend mode and its grain
-    private float[] auraBands = new float[16 * 32];
+    private float[] auraBands;
     // per vertex, texture units 5 and 6: the rim colour (rgb) with the squareness, and the core colour (rgb) with the rays
-    private float[] auraRims = new float[16 * 32];
-    private float[] auraCores = new float[16 * 32];
+    private float[] auraRims;
+    private float[] auraCores;
     private int vertices = 0;
+
+    private final boolean carriesAuras;
+
+    /** a thin mesh: no aura attributes. an aura passed to add() is ignored */
+    public BillboardMesh() {
+        this(false);
+    }
+
+    private BillboardMesh(boolean carriesAuras) {
+        this.carriesAuras = carriesAuras;
+        if (carriesAuras) {
+            this.auras = new float[16 * 32];
+            this.auraColors = new float[16 * 32];
+            this.auraBands = new float[16 * 32];
+            this.auraRims = new float[16 * 32];
+            this.auraCores = new float[16 * 32];
+        }
+    }
+
+    /** a mesh that also carries the aura attributes (texture units 2 to 6): for the sprites that have an aura */
+    public static BillboardMesh withAuras() {
+        return new BillboardMesh(true);
+    }
+
+    public boolean carriesAuras() {
+        return this.carriesAuras;
+    }
 
     public boolean isEmpty() {
         return this.vertices == 0;
@@ -84,11 +116,13 @@ public final class BillboardMesh {
             this.corners = java.util.Arrays.copyOf(this.corners, vertexCapacity * 3);
             this.uvs = java.util.Arrays.copyOf(this.uvs, vertexCapacity * 2);
             this.colors = java.util.Arrays.copyOf(this.colors, vertexCapacity * 4);
-            this.auras = java.util.Arrays.copyOf(this.auras, vertexCapacity * 4);
-            this.auraColors = java.util.Arrays.copyOf(this.auraColors, vertexCapacity * 4);
-            this.auraBands = java.util.Arrays.copyOf(this.auraBands, vertexCapacity * 4);
-            this.auraRims = java.util.Arrays.copyOf(this.auraRims, vertexCapacity * 4);
-            this.auraCores = java.util.Arrays.copyOf(this.auraCores, vertexCapacity * 4);
+            if (this.carriesAuras) {
+                this.auras = java.util.Arrays.copyOf(this.auras, vertexCapacity * 4);
+                this.auraColors = java.util.Arrays.copyOf(this.auraColors, vertexCapacity * 4);
+                this.auraBands = java.util.Arrays.copyOf(this.auraBands, vertexCapacity * 4);
+                this.auraRims = java.util.Arrays.copyOf(this.auraRims, vertexCapacity * 4);
+                this.auraCores = java.util.Arrays.copyOf(this.auraCores, vertexCapacity * 4);
+            }
         }
     }
 
@@ -109,6 +143,9 @@ public final class BillboardMesh {
         this.colors[i * 4 + 1] = block;
         this.colors[i * 4 + 2] = 1.0F;
         this.colors[i * 4 + 3] = tint;
+        if (!this.carriesAuras) {
+            return;   // a thin mesh has no aura attributes to fill
+        }
         BillboardAura aura = this.pendingAura;
         if (aura != null) {
             this.auras[i * 4] = aura.getOffsetX();
@@ -155,15 +192,18 @@ public final class BillboardMesh {
             return;
         }
         int n = this.vertices;
+        boolean auras = this.carriesAuras;
         scratchPositions = scratch(scratchPositions, n * 3);
         scratchCorners = scratch(scratchCorners, n * 3);
         scratchUvs = scratch(scratchUvs, n * 2);
         scratchColors = scratch(scratchColors, n * 4);
-        scratchAuras = scratch(scratchAuras, n * 4);
-        scratchAuraColors = scratch(scratchAuraColors, n * 4);
-        scratchAuraBands = scratch(scratchAuraBands, n * 4);
-        scratchAuraRims = scratch(scratchAuraRims, n * 4);
-        scratchAuraCores = scratch(scratchAuraCores, n * 4);
+        if (auras) {
+            scratchAuras = scratch(scratchAuras, n * 4);
+            scratchAuraColors = scratch(scratchAuraColors, n * 4);
+            scratchAuraBands = scratch(scratchAuraBands, n * 4);
+            scratchAuraRims = scratch(scratchAuraRims, n * 4);
+            scratchAuraCores = scratch(scratchAuraCores, n * 4);
+        }
 
         scratchPositions.clear();
         scratchPositions.put(this.positions, 0, n * 3).flip();
@@ -173,16 +213,18 @@ public final class BillboardMesh {
         scratchUvs.put(this.uvs, 0, n * 2).flip();
         scratchColors.clear();
         scratchColors.put(this.colors, 0, n * 4).flip();
-        scratchAuras.clear();
-        scratchAuras.put(this.auras, 0, n * 4).flip();
-        scratchAuraColors.clear();
-        scratchAuraColors.put(this.auraColors, 0, n * 4).flip();
-        scratchAuraBands.clear();
-        scratchAuraBands.put(this.auraBands, 0, n * 4).flip();
-        scratchAuraRims.clear();
-        scratchAuraRims.put(this.auraRims, 0, n * 4).flip();
-        scratchAuraCores.clear();
-        scratchAuraCores.put(this.auraCores, 0, n * 4).flip();
+        if (auras) {
+            scratchAuras.clear();
+            scratchAuras.put(this.auras, 0, n * 4).flip();
+            scratchAuraColors.clear();
+            scratchAuraColors.put(this.auraColors, 0, n * 4).flip();
+            scratchAuraBands.clear();
+            scratchAuraBands.put(this.auraBands, 0, n * 4).flip();
+            scratchAuraRims.clear();
+            scratchAuraRims.put(this.auraRims, 0, n * 4).flip();
+            scratchAuraCores.clear();
+            scratchAuraCores.put(this.auraCores, 0, n * 4).flip();
+        }
 
         glEnableClientState(GL_VERTEX_ARRAY);
         glVertexPointer(3, 0, scratchPositions);
@@ -195,37 +237,42 @@ public final class BillboardMesh {
         glEnableClientState(GL_TEXTURE_COORD_ARRAY);
         glTexCoordPointer(3, 0, scratchCorners);
 
-        GL13.glClientActiveTexture(GL13.GL_TEXTURE2);
-        glEnableClientState(GL_TEXTURE_COORD_ARRAY);
-        glTexCoordPointer(4, 0, scratchAuras);
+        if (auras) {
+            GL13.glClientActiveTexture(GL13.GL_TEXTURE2);
+            glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+            glTexCoordPointer(4, 0, scratchAuras);
 
-        GL13.glClientActiveTexture(GL13.GL_TEXTURE3);
-        glEnableClientState(GL_TEXTURE_COORD_ARRAY);
-        glTexCoordPointer(4, 0, scratchAuraColors);
+            GL13.glClientActiveTexture(GL13.GL_TEXTURE3);
+            glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+            glTexCoordPointer(4, 0, scratchAuraColors);
 
-        GL13.glClientActiveTexture(GL13.GL_TEXTURE4);
-        glEnableClientState(GL_TEXTURE_COORD_ARRAY);
-        glTexCoordPointer(4, 0, scratchAuraBands);
+            GL13.glClientActiveTexture(GL13.GL_TEXTURE4);
+            glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+            glTexCoordPointer(4, 0, scratchAuraBands);
 
-        GL13.glClientActiveTexture(GL13.GL_TEXTURE5);
-        glEnableClientState(GL_TEXTURE_COORD_ARRAY);
-        glTexCoordPointer(4, 0, scratchAuraRims);
+            GL13.glClientActiveTexture(GL13.GL_TEXTURE5);
+            glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+            glTexCoordPointer(4, 0, scratchAuraRims);
 
-        GL13.glClientActiveTexture(GL13.GL_TEXTURE6);
-        glEnableClientState(GL_TEXTURE_COORD_ARRAY);
-        glTexCoordPointer(4, 0, scratchAuraCores);
+            GL13.glClientActiveTexture(GL13.GL_TEXTURE6);
+            glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+            glTexCoordPointer(4, 0, scratchAuraCores);
+        }
 
         glDrawArrays(GL_QUADS, 0, n);
 
-        glDisableClientState(GL_TEXTURE_COORD_ARRAY);
-        GL13.glClientActiveTexture(GL13.GL_TEXTURE5);
-        glDisableClientState(GL_TEXTURE_COORD_ARRAY);
-        GL13.glClientActiveTexture(GL13.GL_TEXTURE4);
-        glDisableClientState(GL_TEXTURE_COORD_ARRAY);
-        GL13.glClientActiveTexture(GL13.GL_TEXTURE3);
-        glDisableClientState(GL_TEXTURE_COORD_ARRAY);
-        GL13.glClientActiveTexture(GL13.GL_TEXTURE2);
-        glDisableClientState(GL_TEXTURE_COORD_ARRAY);
+        if (auras) {
+            // unit 6 is the active one here
+            glDisableClientState(GL_TEXTURE_COORD_ARRAY);
+            GL13.glClientActiveTexture(GL13.GL_TEXTURE5);
+            glDisableClientState(GL_TEXTURE_COORD_ARRAY);
+            GL13.glClientActiveTexture(GL13.GL_TEXTURE4);
+            glDisableClientState(GL_TEXTURE_COORD_ARRAY);
+            GL13.glClientActiveTexture(GL13.GL_TEXTURE3);
+            glDisableClientState(GL_TEXTURE_COORD_ARRAY);
+            GL13.glClientActiveTexture(GL13.GL_TEXTURE2);
+            glDisableClientState(GL_TEXTURE_COORD_ARRAY);
+        }
         GL13.glClientActiveTexture(GL13.GL_TEXTURE1);
         glDisableClientState(GL_TEXTURE_COORD_ARRAY);
         GL13.glClientActiveTexture(GL13.GL_TEXTURE0);

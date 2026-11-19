@@ -5,6 +5,7 @@ import com.nikohalfkino.rubydung.net.Multiplayer;
 import com.nikohalfkino.rubydung.level.DayNightCycle;
 import com.nikohalfkino.rubydung.entity.piece.ChessPiece;
 import com.nikohalfkino.rubydung.entity.CubeManager;
+import com.nikohalfkino.rubydung.entity.ragdoll.Ragdoll;
 import com.nikohalfkino.rubydung.entity.player.hold.CubeHold;
 import com.nikohalfkino.rubydung.entity.player.interaction.HitResult;
 import com.nikohalfkino.rubydung.RubyDung;
@@ -15,6 +16,7 @@ import com.nikohalfkino.rubydung.interfaces.hud.FpsHud;
 import com.nikohalfkino.rubydung.interfaces.screen.ConsoleScreen;
 import com.nikohalfkino.rubydung.level.Level;
 import com.nikohalfkino.rubydung.level.LevelRenderer;
+import com.nikohalfkino.rubydung.level.WorldBorder;
 import com.nikohalfkino.rubydung.level.LiquidRaycaster;
 import com.nikohalfkino.rubydung.level.tiles.special.LiquidTile;
 import com.nikohalfkino.rubydung.level.tiles.Tile;
@@ -44,6 +46,13 @@ public class GameRenderer {
     private final PlayerRenderer playerRenderer = new PlayerRenderer();
     private final DebugRenderer debugRenderer = new DebugRenderer();
     private final CubeRenderer cubeRenderer = new CubeRenderer();
+    private final RagdollRenderer ragdollRenderer = new RagdollRenderer();
+    private final RagdollOverlay ragdollOverlay = new RagdollOverlay();
+    // keeps the line overlays (ragdoll handles, movement vectors) pixelated when the pixelation filter is off
+    private final OverlayLayer overlayLayer = new OverlayLayer();
+
+    // whether the world is being drawn into the filter's small viewport right now (the overlays are chunky already then)
+    private boolean pixelatingNow = false;
 
     private ScreenshotManager screenshots;
 
@@ -85,6 +94,28 @@ public class GameRenderer {
 
     public DebugRenderer getDebugRenderer() {
         return this.debugRenderer;
+    }
+
+    // the world fades out as the camera falls out of the bottom of it and fades back in after the player has been brought back (see WorldBorder.voidVisibility)
+    private double lastEyeY = Double.NaN;
+    private long revealStartNanos = 0L;
+
+    private float voidVisibility(Level level, double eyeY) {
+        float visibility = WorldBorder.voidVisibility(eyeY);
+        // the camera was below the world last frame and is above its middle now: the player was wrapped back in over the top
+        if (!Double.isNaN(this.lastEyeY) && this.lastEyeY < 0.0D && eyeY > level.depth * 0.5D) {
+            this.revealStartNanos = System.nanoTime();
+        }
+        this.lastEyeY = eyeY;
+        if (this.revealStartNanos != 0L) {
+            float t = (System.nanoTime() - this.revealStartNanos) * 1.0E-9F / WorldBorder.VOID_REVEAL_SECONDS;
+            if (t >= 1.0F) {
+                this.revealStartNanos = 0L;
+            } else {
+                visibility = Math.min(visibility, 0.03F + 0.97F * t * t * (3.0F - 2.0F * t));
+            }
+        }
+        return visibility;
     }
 
     public FloatBuffer getFogColor() {
@@ -205,6 +236,8 @@ public class GameRenderer {
             // Pixelation draws the world into a smaller viewport; setupCamera still gets the full
             // view size so the aspect ratio is right.
             boolean pixelate = GameSettings.isPixelationEnabled() && GameSettings.getPixelSize() > 1;
+            this.pixelatingNow = pixelate;
+            this.overlayLayer.setWindowScale(wm.getScale());
             if (pixelate) {
                 // The filter works in real window pixels; the pixel size grows with the Fit scale.
                 this.pixelation.begin(wm.glX(viewGlX), wm.glY(viewGlY), wm.size(viewWidth), wm.size(viewHeight),
@@ -232,10 +265,14 @@ public class GameRenderer {
                 this.frame.renderDarken(viewWidth, viewHeight);
             }
 
+            lap("world-end");
+
             // The HUD lays itself out inside the viewport (crosshair centred on the world view).
             this.game.getHud().render(this.game.getFont(), viewWidth, viewHeight);
+            lap("hud");
             Multiplayer.renderNameTags(this.game.getFont(), viewWidth, viewHeight);
             this.cubeRenderer.renderDiceTags(this.game.getFont(), viewWidth, viewHeight);
+            lap("tags");
 
             wm.viewport(0, 0, width, height);
         }
@@ -243,12 +280,14 @@ public class GameRenderer {
         if (this.game.getCurrentScreen() != null) {
             this.game.getCurrentScreen().render(mouseX, mouseY);
         }
+        lap("screen");
 
         ConsoleScreen.render(this.game.getConsole(), this.game.getFont(), width, height);
+        lap("console");
         FpsHud.render(this.game, this.game.getFont(), width, height);
 
         wm.endFrame();
-        lap("hud+ui");
+        lap("fps+end");
 
         Display.update();
         lap("swap");
@@ -280,13 +319,18 @@ public class GameRenderer {
         glLoadIdentity();
         view.applyView();
 
+        // the matrices are new: the frustum is worked out again on its first use (once per world view, not once per caller)
+        Frustum.invalidate();
+
         // Where the camera is (the player's eyes in first person).
         double eyeX = view.eyeX();
         double eyeY = view.eyeY();
         double eyeZ = view.eyeZ();
 
-        // Update fog color from the day-night cycle.
-        float[] fc = cycle.getFogColor();
+        // The fog fades into the sky's own colour at the horizon (the dome's colour there, see SkyboxRenderer), so the far
+        // terrain and sea melt into the sky instead of into a dark band. (DayNightCycle.getFogColor is a separate, much darker
+        // set of colours, near black at noon, which is what the fog used before.)
+        float[] fc = cycle.getHorizonColor();
         this.fogColor.clear();
         this.fogColor.put(new float[]{fc[0], fc[1], fc[2], 1.0F}).flip();
 
@@ -308,7 +352,7 @@ public class GameRenderer {
         // Distance fog at the edge of the render distance (the terrain and liquid shaders apply it themselves,
         // the fixed function fog is only switched on for the billboards).
         lap("sky+clouds");
-        Fog.update(GameSettings.getRenderDistance() * (float) Chunk.SIZE, fc, eyeX, eyeZ);
+        Fog.update(GameSettings.getRenderDistance() * (float) Chunk.SIZE, fc, eyeX, eyeZ, voidVisibility(level, eyeY));
         glDisable(GL_FOG);
 
         levelRenderer.setViewPosition(eyeX, eyeY, eyeZ);
@@ -320,6 +364,7 @@ public class GameRenderer {
 
         // The weighted cubes: bodies of their own, so they are drawn here and not as part of the chunk meshes.
         this.cubeRenderer.render(level, cubes, partialTicks);
+        this.ragdollRenderer.render(level, cubes, partialTicks);
 
         // The alpha test is on for the player sprites and the billboards: their transparent pixels draw nothing and
         // write no depth, so the liquids drawn later show through them (a lamppost's texture, a tree's leaves)
@@ -342,6 +387,9 @@ public class GameRenderer {
 
         // The chess pieces are sprites too, drawn the same way, with their own (not square) textures.
         this.cubeRenderer.renderPieces(level, cubes, partialTicks, view.yaw(), eyeX, eyeY, eyeZ);
+
+        // The see-through dice (red, blue): over everything opaque, so the players, the sprites and the pieces behind them show through and are not drawn over them, and before the liquids, which they write depth for.
+        this.cubeRenderer.renderSeeThrough(level, cubes, partialTicks, eyeX, eyeY, eyeZ);
 
         // Where the number over a dice that has rolled is on the screen (it is drawn with the HUD, like the name tags).
         this.cubeRenderer.collectDiceTags(cubes, partialTicks, eyeX, eyeY, eyeZ);
@@ -373,7 +421,9 @@ public class GameRenderer {
             HitResult hitResult = this.game.getPlayerInteraction().getHitResult();
             if (!cubeHold.isHolding()) {
                 ChessPiece targetedPiece = cubes.getTargetedPiece();
-                if (cubeHold.getTargeted() != null) {
+                if (cubeHold.getTargeted() instanceof Ragdoll) {
+                    this.ragdollRenderer.renderHighlight((Ragdoll) cubeHold.getTargeted(), cubeHold.getTargetedPick().part, partialTicks);
+                } else if (cubeHold.getTargeted() != null) {
                     this.cubeRenderer.renderHighlight(cubeHold.getTargeted(), partialTicks);
                 } else if (targetedPiece != null) {
                     // blue for a white piece, red for a black one
@@ -385,11 +435,15 @@ public class GameRenderer {
 
             // the squares the picked chess piece may go to
             levelRenderer.renderChessSelection(this.game.getPlayerInteraction().getChessSelection());
+
+            // frozen ragdoll parts, the part in the hand, and which way it is being turned
+            this.ragdollOverlay.render(this.overlayLayer, this.pixelatingNow, cubes, cubeHold, player, partialTicks, eyeX, eyeY, eyeZ);
         }
 
         // Debug overlays (the chunkborders and vectors commands), drawn in world space with the camera's matrices.
         if (debug && this.debugRenderer.isActive()) {
             this.debugRenderer.render(level, player, eyeX, eyeY, eyeZ, partialTicks);
+            this.debugRenderer.renderVectors(this.overlayLayer, this.pixelatingNow, player, eyeX, eyeY, eyeZ, partialTicks);
         }
 
         glDisable(GL_FOG);

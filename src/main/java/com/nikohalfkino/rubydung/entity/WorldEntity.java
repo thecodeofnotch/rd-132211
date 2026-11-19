@@ -60,12 +60,18 @@ public abstract class WorldEntity extends Entity {
         return false;
     }
 
+    /** a person made of particles (see Ragdoll): what the sounds of a body that is heavy and soft are chosen by */
+    public boolean isRagdoll() {
+        return false;
+    }
+
     // ---------------------------------------------------------------- multiplayer
 
     /** server: whether the entity changed since the players were last told (and notes that they now are). holder is who carries it, -1 nobody */
     public boolean takeDirty(int holder) {
         int code = pieceCode();
-        boolean changed = !this.sentOnce || holder != this.sentHolder || code != this.sentCode
+        boolean extra = extraStateDirty();
+        boolean changed = extra || !this.sentOnce || holder != this.sentHolder || code != this.sentCode
                 || Math.abs(this.x - this.sentX) > 1.0E-4D || Math.abs(this.y - this.sentY) > 1.0E-4D
                 || Math.abs(this.z - this.sentZ) > 1.0E-4D
                 || Math.abs(this.qw - this.sentQw) > 1.0E-4D || Math.abs(this.qx - this.sentQx) > 1.0E-4D
@@ -81,8 +87,29 @@ public abstract class WorldEntity extends Entity {
             this.sentQz = this.qz;
             this.sentHolder = holder;
             this.sentCode = code;
+            extraStateSent();
         }
         return changed;
+    }
+
+    // ---------------------------------------------------------------- extra state
+    // state beyond the position and the orientation (the pose of a ragdoll): the bytes after the usual entry on the wire and in the save, for the piece codes that EntityTypes.extraSizeOf gives a size to
+
+    /** server: whether the extra state differs from what the players were last told. called by takeDirty, which then calls extraStateSent if the entry is sent */
+    protected boolean extraStateDirty() {
+        return false;
+    }
+
+    /** server: the extra state as it was just worked out by extraStateDirty went out */
+    protected void extraStateSent() {
+    }
+
+    /** writes the extra state, exactly EntityTypes.extraSizeOf(pieceCode()) bytes */
+    public void writeExtra(java.io.DataOutputStream out) throws java.io.IOException {
+    }
+
+    /** reads the extra state back. snap: it is the state to start from (a body just created or loaded), not one to ease toward */
+    public void applyExtra(byte[] data, boolean snap) {
     }
 
     /** client: what the server says about this entity. snap = jump there instead of easing (a new one) */
